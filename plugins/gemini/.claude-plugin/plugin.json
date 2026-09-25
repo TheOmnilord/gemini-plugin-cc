@@ -1,0 +1,11 @@
+{
+  "name": "gemini",
+  "version": "0.1.0",
+  "description": "Use Google Gemini (through the official Gemini CLI) from Claude Code to review code, spar on designs, or delegate tasks.",
+  "author": {
+    "name": "TheOmnilord"
+  },
+  "homepage": "https://github.com/TheOmnilord/gemini-plugin-cc",
+  "repository": "https://github.com/TheOmnilord/gemini-plugin-cc",
+  "keywords": ["gemini", "google", "code-review", "second-opinion", "delegation"]
+}

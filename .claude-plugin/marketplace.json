@@ -1,0 +1,21 @@
+{
+  "name": "gemini-cc",
+  "owner": {
+    "name": "TheOmnilord"
+  },
+  "metadata": {
+    "description": "Use Google Gemini from Claude Code for code review, adversarial review, sparring and delegated tasks.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "gemini",
+      "description": "Use Google Gemini (through the official Gemini CLI) from Claude Code to review code, spar on designs, or delegate tasks.",
+      "version": "0.1.0",
+      "author": {
+        "name": "TheOmnilord"
+      },
+      "source": "./plugins/gemini"
+    }
+  ]
+}

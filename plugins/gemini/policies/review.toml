@@ -1,0 +1,9 @@
+# Gemini CLI policy applied by the Claude Code gemini plugin to review runs.
+# Reviews must be grounded in the repository, so web access is switched off.
+# In headless mode Gemini already cannot edit files or run shell commands.
+
+[[rule]]
+toolName = ["google_web_search", "web_fetch"]
+decision = "deny"
+priority = 900
+denyMessage = "Web access is disabled for reviews from Claude Code. Ground findings in the repository."

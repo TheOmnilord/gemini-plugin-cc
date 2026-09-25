@@ -1,0 +1,84 @@
+// Builds the prompts sent to Gemini from the templates in ../../prompts.
+
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { escapeAtSigns } from "./gemini.mjs";
+
+const PROMPTS_DIR = path.resolve(fileURLToPath(new URL("../../prompts", import.meta.url)));
+
+export const REVIEW_FINAL_INSTRUCTION =
+  "Based on the repository context and instructions above, perform the review now and reply with only the JSON object described in the output contract.";
+export const ASK_FINAL_INSTRUCTION =
+  "Based on everything above, answer the request now, following the operating rules and the output format.";
+export const TASK_FINAL_INSTRUCTION =
+  "Based on everything above, carry out the request now, following the operating rules and the output format.";
+export const FOLLOW_UP_FINAL_INSTRUCTION =
+  "Respond to the follow-up above, building on our earlier exchange in this conversation.";
+
+// Written without an at-sign so that escaping cannot garble the note itself.
+const AT_SIGN_NOTE =
+  "Transport note: every at-sign in this message is preceded by a backslash, because the Gemini CLI would otherwise treat it as a file reference. Ignore that backslash when you read code, e-mail addresses or package names: it is not part of the content and not a defect.";
+
+const READ_ONLY_RULES = [
+  "- Read-only session: your file-editing and shell tools are disabled. Do not attempt changes; when a change is warranted, describe it precisely (file, location, replacement code).",
+  "- You can read and search files in the repository, and search the web when it genuinely helps."
+].join("\n");
+
+const WRITE_RULES = [
+  "- You may create and edit files inside this repository with your file-editing tools. Shell commands are disabled, so you cannot build or run tests: list the exact commands Claude should run to verify your changes.",
+  "- Keep edits narrowly scoped to the request: no unrelated refactors, renames or formatting churn."
+].join("\n");
+
+function load(name) {
+  return fs.readFileSync(path.join(PROMPTS_DIR, `${name}.md`), "utf8");
+}
+
+function fill(template, values) {
+  return template.replace(/\{\{([A-Z_]+)\}\}/g, (match, key) =>
+    Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match
+  );
+}
+
+// Escapes at-signs and adds the transport note only when the text needs it.
+function assemble(templateName, values) {
+  const body = fill(load(templateName), values);
+  const needsEscape = body.includes("@");
+  const withNote = body.replace(/\{\{AT_SIGN_NOTE\}\}\r?\n\r?\n/, needsEscape ? `${AT_SIGN_NOTE}\n\n` : "");
+  return `${(needsEscape ? escapeAtSigns(withNote) : withNote).trim()}\n`;
+}
+
+export function buildReviewPrompt(kind, context, focus) {
+  const notes = [];
+  if (context.truncatedFiles.length) {
+    notes.push(`Note: the diff was cut to fit this prompt for these files; read them directly before judging them: ${context.truncatedFiles.join(", ")}`);
+  }
+  if (context.lockfiles.length) {
+    notes.push(`Note: lockfile diffs are summarized, not shown: ${context.lockfiles.join(", ")}`);
+  }
+  return assemble(kind === "adversarial-review" ? "adversarial-review" : "review", {
+    REPO_ROOT: context.repoRoot,
+    BRANCH: context.branch,
+    TARGET_LABEL: context.target.label,
+    TARGET_SUMMARY: context.summary,
+    CONTEXT_NOTES: notes.join("\n"),
+    USER_FOCUS: focus || "No extra focus provided.",
+    REVIEW_INPUT: context.content,
+    OUTPUT_CONTRACT: load("review-output-contract").trim()
+  });
+}
+
+export function buildTaskPrompt({ request, write, kind, workspaceRoot }) {
+  return assemble("task", {
+    WORKSPACE: workspaceRoot,
+    REQUEST_KIND: kind === "ask" ? "asked for your opinion on the request below" : "delegated the request below to you",
+    REQUEST: request,
+    MODE_RULES: write ? WRITE_RULES : READ_ONLY_RULES,
+    WRITE_OUTPUT_NOTE: write ? ', and a "Files changed" list with one line per file describing the change' : ""
+  });
+}
+
+export function buildFollowUpPrompt(request) {
+  return assemble("follow-up", { REQUEST: request });
+}
