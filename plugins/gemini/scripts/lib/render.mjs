@@ -1,6 +1,6 @@
 // Markdown rendering for everything the companion prints.
 
-import { restoreAtSigns } from "./gemini.mjs";
+import { MIN_GEMINI_VERSION, restoreAtSigns } from "./gemini.mjs";
 import { ACTIVE_STATUSES } from "./jobs.mjs";
 
 const AUTH_LABELS = {
@@ -168,7 +168,10 @@ export function renderSetup(report) {
   lines.push(`- **Ready:** ${report.ready ? "yes" : "not yet"}`);
   lines.push(`- **Node.js:** ${report.node.version}${report.node.supported ? "" : " (the Gemini CLI needs Node.js 20 or newer)"}`);
   lines.push(`- **npm:** ${report.npm.available ? report.npm.version : "not found"}`);
-  lines.push(`- **Gemini CLI:** ${report.gemini.installed ? `${report.gemini.version ?? "installed"} (${report.gemini.source})` : "not installed"}`);
+  const tooOld = report.gemini.supported === false ? `, too old: the plugin needs ${MIN_GEMINI_VERSION} or newer` : "";
+  lines.push(
+    `- **Gemini CLI:** ${report.gemini.installed ? `${report.gemini.version ?? "installed"} (${report.gemini.source}${tooOld})` : "not installed"}`
+  );
   lines.push(`- **Sign-in:** ${auth.configured ? AUTH_LABELS[auth.method] ?? auth.method : "not configured"}`);
   if (report.live) {
     const live = report.live;

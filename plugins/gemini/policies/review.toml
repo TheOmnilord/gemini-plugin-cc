@@ -1,6 +1,6 @@
 # Gemini CLI policy applied by the Claude Code gemini plugin to review runs.
 # Reviews must be grounded in the repository, so web access is switched off.
-# In headless mode Gemini already cannot edit files or run shell commands.
+# no-edits.toml and no-shell.toml keep reviews from editing files or running commands.
 
 [[rule]]
 toolName = ["google_web_search", "web_fetch"]

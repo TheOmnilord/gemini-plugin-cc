@@ -12,11 +12,14 @@ import { fileURLToPath } from "node:url";
 import { normalizeArgv, parseArgs } from "./lib/args.mjs";
 import {
   classifyFailure,
+  geminiHomeDir,
   GeminiUnavailableError,
   getAuthStatus,
   getGeminiVersion,
   INSTALL_COMMAND,
   isRunSuccessful,
+  isSupportedGeminiVersion,
+  MIN_GEMINI_VERSION,
   modelsUsed,
   resolveGeminiLaunch,
   runGemini,
@@ -53,7 +56,7 @@ import { parseReview } from "./lib/review.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const PLUGIN_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "..");
-const REVIEW_POLICY = path.join(PLUGIN_ROOT, "policies", "review.toml");
+const POLICIES_DIR = path.join(PLUGIN_ROOT, "policies");
 const DEFAULT_TIMEOUT_MINUTES = { review: 20, "adversarial-review": 20, ask: 15, task: 30 };
 const activeChildren = new Set();
 
@@ -125,6 +128,24 @@ function resolveDiffBudget(options) {
     throw new Error(`Invalid --max-diff-kb value "${raw}" (minimum 16).`);
   }
   return Math.round(kilobytes * 1024);
+}
+
+// Every run blocks shell commands, read-only runs also block edits, and reviews
+// block web access. Passing --policy makes the Gemini CLI skip the user's own
+// policy folder, so that folder is passed along too.
+function policyFiles({ write = false, review = false } = {}) {
+  const files = [path.join(POLICIES_DIR, "no-shell.toml")];
+  if (!write) {
+    files.push(path.join(POLICIES_DIR, "no-edits.toml"));
+  }
+  if (review) {
+    files.push(path.join(POLICIES_DIR, "review.toml"));
+  }
+  const userPolicies = path.join(geminiHomeDir(), "policies");
+  if (fs.existsSync(userPolicies)) {
+    files.push(userPolicies);
+  }
+  return files;
 }
 
 function requireLaunch() {
@@ -273,11 +294,14 @@ async function handleSetup(argv) {
 
   const launch = resolveGeminiLaunch();
   const npmProbe = runShellLine("npm --version");
+  const geminiVersion = launch ? getGeminiVersion(launch) : null;
   const report = {
     ready: false,
     node: { version: process.version, supported: Number(process.versions.node.split(".")[0]) >= 20 },
     npm: { available: npmProbe.status === 0, version: npmProbe.status === 0 ? npmProbe.stdout.trim() : null },
-    gemini: launch ? { installed: true, version: getGeminiVersion(launch), source: launch.source } : { installed: false },
+    gemini: launch
+      ? { installed: true, version: geminiVersion, supported: isSupportedGeminiVersion(geminiVersion), source: launch.source }
+      : { installed: false },
     auth: getAuthStatus(),
     live: null,
     defaultModel: process.env.GEMINI_COMPANION_MODEL?.trim() || null,
@@ -293,6 +317,8 @@ async function handleSetup(argv) {
     report.nextSteps.push(
       report.npm.available ? `Install the Gemini CLI: \`${INSTALL_COMMAND}\`` : `Install Node.js 20+ (includes npm), then run \`${INSTALL_COMMAND}\`.`
     );
+  } else if (report.gemini.supported === false) {
+    report.nextSteps.push(`Update the Gemini CLI to ${MIN_GEMINI_VERSION} or newer: \`${INSTALL_COMMAND}\``);
   } else if (!report.auth.configured) {
     report.nextSteps.push(
       "Sign in once: open a terminal, run `gemini`, choose **Sign in with Google**, finish in the browser, then type `/quit`. " +
@@ -305,23 +331,26 @@ async function handleSetup(argv) {
   if (report.gemini.installed && report.auth.configured && !report.live) {
     report.nextSteps.push("Run `/gemini:setup --check` to confirm with a live request.");
   }
-  report.ready = report.gemini.installed && report.auth.configured && (report.live ? report.live.ok : true);
+  report.ready =
+    report.gemini.installed && report.gemini.supported !== false && report.auth.configured && (report.live ? report.live.ok : true);
 
   write(options.json ? JSON.stringify(report, null, 2) : render.renderSetup(report));
 }
 
 async function runLiveCheck(launch, model) {
-  // An empty scratch folder keeps Gemini from scanning a real project.
+  // An empty scratch folder keeps Gemini from scanning a real project. It is
+  // never trusted interactively, so it is trusted for this run only.
   const cwd = path.join(dataRoot(), "live-check");
   fs.mkdirSync(cwd, { recursive: true });
   try {
     const run = await runGemini({
       launch,
       cwd,
+      env: { GEMINI_CLI_TRUST_WORKSPACE: "true" },
       prompt: "Connectivity check from the Claude Code gemini plugin.",
       finalInstruction: "Reply with exactly the single word READY.",
       approvalMode: "default",
-      policyFiles: [REVIEW_POLICY],
+      policyFiles: policyFiles({ review: true }),
       model,
       sessionId: randomUUID(),
       timeoutMs: 120_000
@@ -369,7 +398,7 @@ async function handleReview(argv, kind) {
     prompt: buildReviewPrompt(kind, context, focus),
     finalInstruction: REVIEW_FINAL_INSTRUCTION,
     approvalMode: "default",
-    policyFiles: [REVIEW_POLICY],
+    policyFiles: policyFiles({ review: true }),
     model: resolveModel(options),
     sessionId: randomUUID(),
     timeoutMs: resolveTimeoutMs(options, kind)
@@ -417,6 +446,7 @@ async function handleConsult(argv, kind) {
       : buildTaskPrompt({ request, write: writeMode, kind, workspaceRoot }),
     finalInstruction: resumeSessionId ? FOLLOW_UP_FINAL_INSTRUCTION : kind === "ask" ? ASK_FINAL_INSTRUCTION : TASK_FINAL_INSTRUCTION,
     approvalMode: writeMode ? "auto_edit" : "default",
+    policyFiles: policyFiles({ write: writeMode }),
     model: resolveModel(options),
     resumeSessionId,
     sessionId: resumeSessionId ? null : randomUUID(),

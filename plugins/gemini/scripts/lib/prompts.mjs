@@ -28,6 +28,7 @@ const READ_ONLY_RULES = [
 
 const WRITE_RULES = [
   "- You may create and edit files inside this repository with your file-editing tools. Shell commands are disabled, so you cannot build or run tests: list the exact commands Claude should run to verify your changes.",
+  "- Build and dependency files (package.json, lockfiles, Makefiles, Dockerfiles, go.mod, Cargo.toml, pyproject.toml and similar) cannot be edited in this session. If one needs a change, give the exact change for Claude to apply.",
   "- Keep edits narrowly scoped to the request: no unrelated refactors, renames or formatting churn."
 ].join("\n");
 

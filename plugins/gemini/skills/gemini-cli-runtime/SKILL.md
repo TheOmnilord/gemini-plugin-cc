@@ -18,7 +18,7 @@ GEMINI_TASK
 
 Flags that `task` understands:
 - (default) read-only: Gemini can read and search files and the web, but cannot edit files or run commands.
-- `--write`: Gemini runs with `--approval-mode auto_edit` and may create and edit files inside the repository. Shell commands stay disabled in headless mode, so it cannot run builds or tests.
+- `--write`: Gemini runs with `--approval-mode auto_edit` and may create and edit files inside the repository, except build files such as package.json, lockfiles and Dockerfiles. Shell commands stay disabled, so it cannot run builds or tests.
 - `--resume-last`: continue the most recent Gemini conversation in this repository (this Claude session's first). Send only the new instruction.
 - `--model <pro|flash|flash-lite|auto|model-id>`.
 - `--background`: start a detached job and print its ID; the user follows up with `/gemini:status` and `/gemini:result`.

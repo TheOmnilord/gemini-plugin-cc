@@ -12,9 +12,9 @@ Run:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" setup "$ARGUMENTS"
 ```
 
-If the report says the Gemini CLI is not installed and npm is available:
-- Use `AskUserQuestion` once, with the options `Install Gemini CLI (Recommended)` and `Skip for now`.
-- If the user chooses to install, run `npm install -g @google/gemini-cli` with the Bash tool and `timeout: 600000`, then run the setup command again.
+If the report says the Gemini CLI is not installed, or is too old, and npm is available:
+- Use `AskUserQuestion` once, with the options `Install Gemini CLI (Recommended)` (or `Update Gemini CLI (Recommended)` when it is too old) and `Skip for now`.
+- If the user chooses to install or update, run `npm install -g @google/gemini-cli` with the Bash tool and `timeout: 600000`, then run the setup command again.
 
 Output rules:
 - Present the final setup report as returned.

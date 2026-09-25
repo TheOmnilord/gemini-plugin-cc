@@ -22,8 +22,9 @@ Claude can also call the `gemini-rescue` subagent on its own when another model'
 - Claude Code with plugin support
 - Node.js 20+ and npm
 - Git (for reviews)
-- The Gemini CLI: `npm install -g @google/gemini-cli` (`/gemini:setup` offers to install it)
+- The Gemini CLI 0.41 or newer: `npm install -g @google/gemini-cli` (`/gemini:setup` offers to install or update it)
 - A Gemini sign-in, done once in a terminal: run `gemini` and choose **Sign in with Google** (free tier, or Google AI Pro/Ultra for higher limits). Alternatives: `GEMINI_API_KEY=<key>` from [Google AI Studio](https://aistudio.google.com/app/apikey) in `~/.gemini/.env`, or Vertex AI. Google Workspace accounts also need `GOOGLE_CLOUD_PROJECT`; see the [Gemini CLI authentication docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/authentication.md).
+- A trusted folder: the Gemini CLI's folder trust is on by default, and headless runs stop in folders you have not trusted. Run `gemini` once in each repository and choose **Trust folder**, or set `GEMINI_CLI_TRUST_WORKSPACE=true` to trust every folder.
 
 ## Install
 
@@ -43,7 +44,13 @@ Or inside Claude Code: `/plugin marketplace add TheOmnilord/gemini-plugin-cc`, t
 
 - Every command calls [`plugins/gemini/scripts/gemini-companion.mjs`](plugins/gemini/scripts/gemini-companion.mjs), which runs `gemini --output-format stream-json` headlessly with the prompt on stdin.
 - **Reviews** collect the git diff (staged, unstaged and untracked files, or the branch against its merge-base), inline it in the prompt, and ask Gemini for a JSON verdict with findings, which is rendered as Markdown. The diff budget defaults to 600 KB. Lockfile diffs are summarized, and oversized files are cut with a note telling Gemini to read them itself.
-- **Safety:** reviews and asks run with `--approval-mode default`. In headless mode the Gemini CLI's policy engine then denies file edits and shell commands, so Gemini can only read. Reviews also load [`policies/review.toml`](plugins/gemini/policies/review.toml), which switches off web search and fetch. `--write` switches to `--approval-mode auto_edit`: Gemini may edit files inside the repository, but still cannot run shell commands.
+- **Safety:** reviews and asks run with `--approval-mode default`, so Gemini can only read. The companion also loads the plugin's policies at the highest user priority, so policy files inside a repository cannot loosen them:
+  - [`no-shell.toml`](plugins/gemini/policies/no-shell.toml) blocks shell commands in every run.
+  - [`no-edits.toml`](plugins/gemini/policies/no-edits.toml) blocks file edits in reviews, asks and read-only tasks.
+  - [`review.toml`](plugins/gemini/policies/review.toml) switches off web search and fetch for reviews.
+
+  Passing `--policy` makes the Gemini CLI skip `~/.gemini/policies`, so the companion passes that folder along too.
+- **Write mode:** `--write` switches to `--approval-mode auto_edit`. Gemini may then edit files inside the repository, but it still cannot run shell commands. It also cannot change build files such as `package.json`, lockfiles, Makefiles or Dockerfiles, because the Gemini CLI never lets a headless run edit them. Gemini describes those changes instead.
 - The Gemini CLI treats `@word` in a prompt as a file reference and pastes in any file that matches, so the companion escapes every `@` before sending and tells Gemini it has done so.
 - Each run gets its own Gemini session ID. `--resume` continues that conversation with `gemini --resume <id>`.
 - Job records and logs are stored per repository in Claude Code's plugin data folder (`~/.claude/plugins/data/gemini-gemini-cc/`).

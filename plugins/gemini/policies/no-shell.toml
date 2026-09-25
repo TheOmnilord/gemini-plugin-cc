@@ -1,0 +1,10 @@
+# Gemini CLI policy applied by the Claude Code gemini plugin to every run.
+# Headless Gemini denies shell commands by default, but that built-in rule has
+# the lowest rank, so policies in a trusted repository could allow them again.
+# This rule is loaded at user level with the highest priority to keep them off.
+
+[[rule]]
+toolName = "run_shell_command"
+decision = "deny"
+priority = 999
+denyMessage = "Shell commands are disabled for Gemini runs from Claude Code."
