@@ -1,5 +1,5 @@
-// Parses Gemini's review answer. The CLI cannot enforce a JSON schema, so the
-// object is extracted leniently and normalized before rendering.
+// Parses Gemini's review answer. agy enforces the JSON schema; the Gemini CLI
+// cannot, so there the object is extracted leniently. Both are normalized.
 
 const SEVERITIES = ["critical", "high", "medium", "low"];
 
@@ -82,6 +82,8 @@ export function normalizeReview(value) {
   };
 }
 
-export function parseReview(answer) {
-  return normalizeReview(extractJsonObject(answer));
+// agy returns schema-checked output separately; the Gemini CLI only has the text.
+export function parseReview(answer, structured = null) {
+  const value = structured && typeof structured === "object" && !Array.isArray(structured) ? structured : extractJsonObject(answer);
+  return normalizeReview(value);
 }

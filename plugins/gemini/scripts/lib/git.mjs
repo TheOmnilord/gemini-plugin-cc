@@ -195,7 +195,7 @@ function packChunks(entries, budget) {
     const cut = entry.chunk.slice(0, allowance[index]);
     const lastNewline = cut.lastIndexOf("\n");
     const kept = lastNewline > 0 ? cut.slice(0, lastNewline + 1) : cut;
-    return `${kept}[... diff truncated here: ${kept.length} of ${sizes[index]} characters shown. Open ${entry.file} with read_file for the full picture ...]\n`;
+    return `${kept}[... diff truncated here: ${kept.length} of ${sizes[index]} characters shown. Open ${entry.file} with your file-reading tool for the full picture ...]\n`;
   });
   return { texts, truncated };
 }
@@ -249,7 +249,7 @@ function formatUntracked(repoRoot, files, budget) {
     }
     if (stat.size > MAX_UNTRACKED_FILE_BYTES || used + stat.size > budget) {
       skipped.push(relative);
-      blocks.push(`### ${relative}\n(new file, ${stat.size} bytes, not inlined: open it with read_file)`);
+      blocks.push(`### ${relative}\n(new file, ${stat.size} bytes, not inlined: open it with your file-reading tool)`);
       continue;
     }
 

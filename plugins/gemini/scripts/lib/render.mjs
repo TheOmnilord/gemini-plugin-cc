@@ -55,6 +55,11 @@ function footer(job, extraLines = []) {
   return ["---", `Gemini · ${parts.join(" · ")}`, ...extraLines].join("\n");
 }
 
+// Only prompts for the Gemini CLI escape at-signs, so only its answers are restored.
+function unescaper(job) {
+  return (job?.backend ?? "gemini-cli") === "gemini-cli" ? restoreAtSigns : (text) => String(text ?? "");
+}
+
 function formatLocation(finding) {
   if (!finding.file) {
     return null;
@@ -67,6 +72,7 @@ function formatLocation(finding) {
 }
 
 export function renderReview({ label, context, focus, review, answer, job }) {
+  const show = unescaper(job);
   const lines = [`# Gemini ${label}`, ""];
   const meta = [`**Target:** ${context.target.label} (${context.summary})`];
   if (focus) {
@@ -81,32 +87,32 @@ export function renderReview({ label, context, focus, review, answer, job }) {
   }
 
   if (!review) {
-    lines.push("Gemini did not return the structured review format, so its answer is shown as-is:", "", restoreAtSigns(answer.trim()), "");
+    lines.push("Gemini did not return the structured review format, so its answer is shown as-is:", "", show(answer.trim()), "");
   } else {
     if (review.summary) {
-      lines.push(restoreAtSigns(review.summary), "");
+      lines.push(show(review.summary), "");
     }
     if (review.findings.length === 0) {
       lines.push("No material findings.", "");
     } else {
       lines.push("## Findings", "");
       review.findings.forEach((finding, index) => {
-        lines.push(`### ${index + 1}. [${finding.severity}] ${restoreAtSigns(finding.title)}`);
+        lines.push(`### ${index + 1}. [${finding.severity}] ${show(finding.title)}`);
         const details = [formatLocation(finding), finding.confidence != null ? `confidence ${finding.confidence.toFixed(2)}` : null].filter(Boolean);
         if (details.length) {
           lines.push(details.join(" · "));
         }
         lines.push("");
         if (finding.body) {
-          lines.push(restoreAtSigns(finding.body), "");
+          lines.push(show(finding.body), "");
         }
         if (finding.recommendation) {
-          lines.push(`**Recommendation:** ${restoreAtSigns(finding.recommendation)}`, "");
+          lines.push(`**Recommendation:** ${show(finding.recommendation)}`, "");
         }
       });
     }
     if (review.nextSteps.length) {
-      lines.push("## Next steps", "", ...review.nextSteps.map((step) => `- ${restoreAtSigns(step)}`), "");
+      lines.push("## Next steps", "", ...review.nextSteps.map((step) => `- ${show(step)}`), "");
     }
   }
 
@@ -116,7 +122,7 @@ export function renderReview({ label, context, focus, review, answer, job }) {
 
 export function renderConsult({ job, answer, editedFiles }) {
   const heading = job.kind === "ask" ? "Gemini's answer" : job.write ? "Gemini task result (write mode)" : "Gemini task result";
-  const lines = [`# ${heading}`, "", restoreAtSigns(answer.trim()), ""];
+  const lines = [`# ${heading}`, "", unescaper(job)(answer.trim()), ""];
   if (job.write) {
     lines.push(
       editedFiles.length ? `**Files Gemini edited:**\n${editedFiles.map((file) => `- \`${file}\``).join("\n")}` : "Gemini did not edit any files.",
@@ -138,7 +144,7 @@ export function renderFailure({ title, failure, run, job }) {
     lines.push("Last lines from Gemini:", "```text", lastLines(excerpt, 15), "```", "");
   }
   if (run?.text?.trim()) {
-    lines.push("Partial answer:", "", restoreAtSigns(run.text.trim()), "");
+    lines.push("Partial answer:", "", unescaper(job)(run.text.trim()), "");
   }
   if (job?.logFile) {
     lines.push(`Log: \`${job.logFile}\``);
@@ -163,9 +169,58 @@ export function renderCancel(job) {
 }
 
 export function renderSetup(report) {
+  return report.backend === "agy" ? renderAgySetup(report) : renderGeminiCliSetup(report);
+}
+
+function liveCheckLine(live) {
+  return `- **Live check:** ${
+    live.ok ? `passed in ${formatDuration(live.durationMs)}${live.models?.length ? ` (${live.models.join(", ")})` : ""}` : `failed: ${live.message}`
+  }`;
+}
+
+function setupTail(lines, report) {
+  if (report.nextSteps.length) {
+    lines.push("", "## Next steps", "", ...report.nextSteps.map((step) => `- ${step}`));
+  }
+  if (report.live && !report.live.ok && report.live.excerpt) {
+    lines.push("", "```text", report.live.excerpt, "```");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderAgySetup(report) {
+  const lines = ["# Gemini setup", ""];
+  lines.push(`- **Ready:** ${report.ready ? "yes" : "not yet"}`);
+  lines.push("- **Backend:** Antigravity CLI (`agy`), which works with personal Google accounts");
+  lines.push(`- **Antigravity CLI:** ${report.agy.installed ? `${report.agy.version ?? "installed"} (${report.agy.source})` : "not installed"}`);
+  const signIn = report.signIn;
+  const signInText = !signIn
+    ? "not checked"
+    : signIn.signedIn
+      ? "signed in"
+      : signIn.signedIn === false
+        ? "not signed in"
+        : `could not be checked (${signIn.message})`;
+  lines.push(`- **Sign-in:** ${signInText}`);
+  const { requested, resolved, available } = report.model;
+  const origin = !requested ? " (default)" : requested !== resolved ? ` (from \`${requested}\`)` : "";
+  lines.push(`- **Model:** \`${resolved}\`${origin}${available === false ? ", not offered to this account" : ""}`);
+  if (report.models.length) {
+    lines.push(`- **Models on this account:** ${report.models.map((model) => `\`${model}\``).join(", ")}`);
+  }
+  if (report.live) {
+    lines.push(liveCheckLine(report.live));
+  }
+  lines.push(`- **Plugin's agy profile:** \`${report.profile}\``);
+  lines.push(`- **Job data:** \`${report.dataDir}\``);
+  return setupTail(lines, report);
+}
+
+function renderGeminiCliSetup(report) {
   const auth = report.auth;
   const lines = ["# Gemini setup", ""];
   lines.push(`- **Ready:** ${report.ready ? "yes" : "not yet"}`);
+  lines.push("- **Backend:** Gemini CLI (selected with GEMINI_COMPANION_BACKEND=gemini-cli)");
   lines.push(`- **Node.js:** ${report.node.version}${report.node.supported ? "" : " (the Gemini CLI needs Node.js 20 or newer)"}`);
   lines.push(`- **npm:** ${report.npm.available ? report.npm.version : "not found"}`);
   const tooOld = report.gemini.supported === false ? `, too old: the plugin needs ${MIN_GEMINI_VERSION} or newer` : "";
@@ -174,10 +229,7 @@ export function renderSetup(report) {
   );
   lines.push(`- **Sign-in:** ${auth.configured ? AUTH_LABELS[auth.method] ?? auth.method : "not configured"}`);
   if (report.live) {
-    const live = report.live;
-    lines.push(
-      `- **Live check:** ${live.ok ? `passed in ${formatDuration(live.durationMs)}${live.models?.length ? ` (${live.models.join(", ")})` : ""}` : `failed: ${live.message}`}`
-    );
+    lines.push(liveCheckLine(report.live));
   }
   if (report.defaultModel) {
     lines.push(`- **Default model:** ${report.defaultModel} (from GEMINI_COMPANION_MODEL)`);
@@ -186,13 +238,7 @@ export function renderSetup(report) {
   for (const note of auth.notes ?? []) {
     lines.push(`- ${note}`);
   }
-  if (report.nextSteps.length) {
-    lines.push("", "## Next steps", "", ...report.nextSteps.map((step) => `- ${step}`));
-  }
-  if (report.live && !report.live.ok && report.live.excerpt) {
-    lines.push("", "```text", report.live.excerpt, "```");
-  }
-  return `${lines.join("\n")}\n`;
+  return setupTail(lines, report);
 }
 
 function describeTiming(job) {

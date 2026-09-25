@@ -1,55 +1,18 @@
+// Tests for the shared companion code and the opt-in Gemini CLI backend.
+
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test, { after } from "node:test";
-import { fileURLToPath } from "node:url";
+import test from "node:test";
 
 import { normalizeArgv, parseArgs, splitRawArgumentString } from "../plugins/gemini/scripts/lib/args.mjs";
 import { escapeAtSigns, isSupportedGeminiVersion, restoreAtSigns } from "../plugins/gemini/scripts/lib/gemini.mjs";
 import { collectReviewContext, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
 import { extractJsonObject, parseReview } from "../plugins/gemini/scripts/lib/review.mjs";
+import { argAfter, argsAfter, captures, companion, git, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
 
-const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-const COMPANION = path.join(ROOT, "plugins", "gemini", "scripts", "gemini-companion.mjs");
 const FAKE_GEMINI = path.join(ROOT, "tests", "fixtures", "fake-gemini.mjs");
-
-const createdDirs = [];
-
-function tempDir(prefix) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdDirs.push(dir);
-  return dir;
-}
-
-after(() => {
-  for (const dir of createdDirs) {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-    } catch {
-      // A just-killed background process may still hold a file on Windows.
-    }
-  }
-});
-
-function git(cwd, ...args) {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
-  assert.equal(result.status, 0, result.stderr);
-  return result.stdout;
-}
-
-function makeRepo() {
-  const dir = tempDir("gemini-cc-repo-");
-  git(dir, "init", "-q", "-b", "main");
-  git(dir, "config", "user.email", "test@example.com");
-  git(dir, "config", "user.name", "Test");
-  git(dir, "config", "core.autocrlf", "false");
-  fs.writeFileSync(path.join(dir, "app.js"), "export function average(xs) {\n  return xs.reduce((a, b) => a + b, 0) / xs.length;\n}\n");
-  git(dir, "add", "-A");
-  git(dir, "commit", "-q", "-m", "init");
-  return dir;
-}
 
 function makeEnv(extra = {}) {
   const data = tempDir("gemini-cc-data-");
@@ -59,6 +22,7 @@ function makeEnv(extra = {}) {
     capture: path.join(data, "capture.jsonl"),
     geminiHome,
     env: {
+      GEMINI_COMPANION_BACKEND: "gemini-cli",
       GEMINI_COMPANION_CLI: FAKE_GEMINI,
       GEMINI_COMPANION_DATA: data,
       GEMINI_COMPANION_MODEL: "",
@@ -71,44 +35,8 @@ function makeEnv(extra = {}) {
   };
 }
 
-function companion(args, { cwd, env, input = "" }) {
-  const result = spawnSync(process.execPath, [COMPANION, ...args], {
-    cwd,
-    input,
-    encoding: "utf8",
-    env: { ...process.env, ...env },
-    timeout: 60_000
-  });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-}
-
-function captures(file) {
-  return fs.readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-}
-
-function argAfter(args, name) {
-  const index = args.indexOf(name);
-  return index === -1 ? null : args[index + 1];
-}
-
-function argsAfter(args, name) {
-  return args.flatMap((arg, index) => (arg === name ? [args[index + 1]] : []));
-}
-
 function policyNames(args) {
   return argsAfter(args, "--policy").map((file) => path.basename(file));
-}
-
-async function waitFor(check, timeoutMs = 20_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = check();
-    if (value) {
-      return value;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error("Timed out waiting for condition.");
 }
 
 test("splits raw slash-command arguments", () => {

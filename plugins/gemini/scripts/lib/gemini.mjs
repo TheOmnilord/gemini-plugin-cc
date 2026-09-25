@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 import { killProcessTree, runCommand, runShellLine } from "./proc.mjs";
 
@@ -21,12 +22,33 @@ const INPUT_ERROR_EXIT_CODE = 42;
 const UNTRUSTED_EXIT_CODE = 55;
 const MODEL_PATTERN = /^[A-Za-z0-9._:/-]+$/;
 const WRITE_TOOLS = new Set(["write_file", "replace", "edit", "edit_file", "smart_edit"]);
+const POLICIES_DIR = fileURLToPath(new URL("../../policies", import.meta.url));
 
+// Raised when the selected backend's CLI cannot be found; the companion prints
+// the message as setup guidance instead of a stack trace.
 export class GeminiUnavailableError extends Error {
-  constructor() {
-    super(`The Gemini CLI was not found. Install it with \`${INSTALL_COMMAND}\` (Node.js 20+), then run /gemini:setup.`);
+  constructor(message = `The Gemini CLI was not found. Install it with \`${INSTALL_COMMAND}\` (Node.js 20+), then run /gemini:setup.`) {
+    super(message);
     this.name = "GeminiUnavailableError";
   }
+}
+
+// Every run blocks shell commands, read-only runs also block edits, and runs
+// without web access block web tools. Passing --policy makes the Gemini CLI
+// skip the user's own policy folder, so that folder is passed along too.
+export function geminiPolicyFiles({ write = false, web = true } = {}) {
+  const files = [path.join(POLICIES_DIR, "no-shell.toml")];
+  if (!write) {
+    files.push(path.join(POLICIES_DIR, "no-edits.toml"));
+  }
+  if (!web) {
+    files.push(path.join(POLICIES_DIR, "review.toml"));
+  }
+  const userPolicies = path.join(geminiHomeDir(), "policies");
+  if (fs.existsSync(userPolicies)) {
+    files.push(userPolicies);
+  }
+  return files;
 }
 
 // The Gemini CLI turns "@path" in a prompt into a file lookup (with a fuzzy
