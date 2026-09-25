@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { normalizeArgv, parseArgs, splitRawArgumentString } from "../plugins/gemini/scripts/lib/args.mjs";
@@ -15,9 +15,23 @@ const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const COMPANION = path.join(ROOT, "plugins", "gemini", "scripts", "gemini-companion.mjs");
 const FAKE_GEMINI = path.join(ROOT, "tests", "fixtures", "fake-gemini.mjs");
 
+const createdDirs = [];
+
 function tempDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  createdDirs.push(dir);
+  return dir;
 }
+
+after(() => {
+  for (const dir of createdDirs) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch {
+      // A just-killed background process may still hold a file on Windows.
+    }
+  }
+});
 
 function git(cwd, ...args) {
   const result = spawnSync("git", args, { cwd, encoding: "utf8" });
