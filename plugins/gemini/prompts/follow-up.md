@@ -2,6 +2,11 @@ Follow-up from Claude Code in this same conversation. Answer in Markdown prose, 
 
 {{AT_SIGN_NOTE}}
 
+<operating_rules>
+These rules apply to this turn and replace any earlier ones:
+{{MODE_RULES}}
+</operating_rules>
+
 <follow_up>
 {{REQUEST}}
 </follow_up>

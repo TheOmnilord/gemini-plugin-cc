@@ -1,27 +1,35 @@
 #!/usr/bin/env node
-// Claude Code companion for the Gemini CLI: code reviews, second opinions and
+// Claude Code companion for Google Gemini: code reviews, second opinions and
 // delegated tasks, with job tracking so background runs can be followed up.
+// Gemini is reached through the Antigravity CLI by default, or through the
+// Gemini CLI when GEMINI_COMPANION_BACKEND=gemini-cli (see lib/backends.mjs).
 
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-import { normalizeArgv, parseArgs } from "./lib/args.mjs";
 import {
-  classifyFailure,
+  AGY_INSTALL_COMMAND,
+  AGY_INSTALL_SHELL_COMMAND,
+  AGY_SIGN_IN_STEP,
+  agyProfileDir,
+  getAgyVersion,
+  listAgyModels,
+  resolveAgyLaunch,
+  resolveAgyModel
+} from "./lib/agy.mjs";
+import { normalizeArgv, parseArgs } from "./lib/args.mjs";
+import { getBackend } from "./lib/backends.mjs";
+import {
   GeminiUnavailableError,
   getAuthStatus,
   getGeminiVersion,
   INSTALL_COMMAND,
-  isRunSuccessful,
-  modelsUsed,
-  resolveGeminiLaunch,
-  runGemini,
-  touchedFiles,
-  usageSummary
+  isSupportedGeminiVersion,
+  MIN_GEMINI_VERSION,
+  resolveGeminiLaunch
 } from "./lib/gemini.mjs";
 import { collectReviewContext, DEFAULT_MAX_INLINE_BYTES, getRepoRoot, requireRepoRoot, resolveReviewTarget } from "./lib/git.mjs";
 import {
@@ -52,8 +60,6 @@ import * as render from "./lib/render.mjs";
 import { parseReview } from "./lib/review.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
-const PLUGIN_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "..");
-const REVIEW_POLICY = path.join(PLUGIN_ROOT, "policies", "review.toml");
 const DEFAULT_TIMEOUT_MINUTES = { review: 20, "adversarial-review": 20, ask: 15, task: 30 };
 const activeChildren = new Set();
 
@@ -71,7 +77,8 @@ function usage() {
     "  cancel [job-id] [--json]",
     "  resume-candidate [--json]",
     "",
-    "Common: --cwd <dir> (-C). Models: pro, flash, flash-lite, auto or a full Gemini model id."
+    "Common: --cwd <dir> (-C). Models: pro, flash, flash-lite, auto or a full model id (/gemini:setup lists them).",
+    "Backend: Antigravity CLI (agy) by default; GEMINI_COMPANION_BACKEND=gemini-cli selects the Gemini CLI."
   ].join("\n");
 }
 
@@ -127,12 +134,17 @@ function resolveDiffBudget(options) {
   return Math.round(kilobytes * 1024);
 }
 
-function requireLaunch() {
-  const launch = resolveGeminiLaunch();
+function requireLaunch(backend) {
+  const launch = backend.resolveLaunch();
   if (!launch) {
-    throw new GeminiUnavailableError();
+    throw backend.unavailableError();
   }
   return launch;
+}
+
+// Job records written before backends existed came from the Gemini CLI.
+function jobBackend(job) {
+  return job.backend ?? "gemini-cli";
 }
 
 // Reads piped stdin (for heredoc prompts) without hanging when nothing is piped.
@@ -172,7 +184,7 @@ async function readRequest(cwd, options, positionals) {
   return [positionals.join(" ").trim(), piped].filter(Boolean).join("\n\n");
 }
 
-async function executeJob(job, request) {
+async function executeJob(job, backend, request) {
   job.status = "running";
   job.pid = process.pid;
   job.startedAt = nowIso();
@@ -180,14 +192,14 @@ async function executeJob(job, request) {
   saveJob(job);
   appendLog(
     job.logFile,
-    `${job.title} started (pid ${process.pid}, approval ${request.approvalMode}${request.model ? `, model ${request.model}` : ""}${
+    `${job.title} started (pid ${process.pid}, ${backend.label}, ${request.write ? "write" : "read-only"}${request.model ? `, model ${request.model}` : ""}${
       request.resumeSessionId ? `, resuming ${request.resumeSessionId}` : ""
     })`
   );
 
   let run;
   try {
-    run = await runGemini({
+    run = await backend.run({
       ...request,
       onLog: (line) => appendLog(job.logFile, line),
       onSpawn: (child) => {
@@ -202,12 +214,12 @@ async function executeJob(job, request) {
     throw error;
   }
 
-  job.geminiSessionId = run.sessionId ?? request.resumeSessionId ?? request.sessionId ?? null;
+  job.geminiSessionId = run.sessionId ?? request.resumeSessionId ?? null;
   job.model = run.model ?? job.model;
-  job.modelsUsed = modelsUsed(run);
+  job.modelsUsed = backend.modelsUsed(run);
   job.exitCode = run.exitCode;
   job.durationMs = run.durationMs;
-  job.usage = usageSummary(run);
+  job.usage = backend.usageSummary(run);
   if (run.transcript) {
     appendLog(job.logFile, `answer:\n${run.transcript}`);
   }
@@ -234,8 +246,9 @@ function finishJob(job, status, output, summary) {
   pruneJobs(job.workspaceRoot);
 }
 
-function findResumeCandidate(workspaceRoot) {
-  const jobs = listJobs(workspaceRoot);
+// Conversations live with the backend that started them, so only those can be continued.
+function findResumeCandidate(workspaceRoot, backend) {
+  const jobs = listJobs(workspaceRoot).filter((job) => jobBackend(job) === backend.name);
   const sessionId = process.env.CLAUDE_CODE_SESSION_ID ?? null;
   const resumable = jobs.filter((job) => job.geminiSessionId && job.status === "completed");
   const mine = sessionId ? resumable.filter((job) => job.claudeSessionId === sessionId) : [];
@@ -247,14 +260,14 @@ function findResumeCandidate(workspaceRoot) {
   return { job, busy };
 }
 
-function resolveResumeSession(workspaceRoot, options) {
+function resolveResumeSession(workspaceRoot, options, backend) {
   if (options["resume-session"]) {
     return options["resume-session"];
   }
   if (options.fresh || !(options["resume-last"] || options.resume)) {
     return null;
   }
-  const candidate = findResumeCandidate(workspaceRoot);
+  const candidate = findResumeCandidate(workspaceRoot, backend);
   if (!candidate) {
     throw new Error("There is no earlier Gemini conversation in this repository to continue. Drop --resume to start a new one.");
   }
@@ -270,14 +283,84 @@ async function handleSetup(argv) {
     booleanOptions: ["json", "check"],
     aliasMap: { C: "cwd", m: "model" }
   });
+  const backend = getBackend();
+  const report = backend.name === "agy" ? await agySetupReport(backend, options) : await geminiCliSetupReport(backend, options);
+  write(options.json ? JSON.stringify(report, null, 2) : render.renderSetup(report));
+}
 
+function nodeReport() {
+  return { version: process.version, supported: Number(process.versions.node.split(".")[0]) >= 20 };
+}
+
+async function agySetupReport(backend, options) {
+  const launch = resolveAgyLaunch();
+  const requestedModel = resolveModel(options);
+  const report = {
+    backend: backend.name,
+    ready: false,
+    node: nodeReport(),
+    agy: launch ? { installed: true, version: getAgyVersion(launch), source: launch.source } : { installed: false },
+    signIn: null,
+    models: [],
+    model: { requested: requestedModel, resolved: resolveAgyModel(requestedModel), available: null },
+    profile: agyProfileDir(),
+    install: { command: AGY_INSTALL_COMMAND, shellCommand: AGY_INSTALL_SHELL_COMMAND },
+    live: null,
+    dataDir: dataRoot(),
+    nextSteps: []
+  };
+
+  if (launch) {
+    const listing = listAgyModels(launch);
+    report.signIn = { signedIn: listing.signedIn, message: listing.ok ? null : listing.message };
+    if (listing.ok) {
+      report.models = listing.models.map((entry) => entry.slug);
+      report.model.available = report.models.includes(report.model.resolved);
+    }
+  }
+  if (options.check && launch && report.signIn?.signedIn) {
+    report.live = await runLiveCheck(backend, launch, requestedModel);
+  }
+
+  if (!report.agy.installed) {
+    report.nextSteps.push(`Install the Antigravity CLI: \`${AGY_INSTALL_COMMAND}\``);
+  } else if (report.signIn?.signedIn === false) {
+    report.nextSteps.push(AGY_SIGN_IN_STEP);
+    if (process.platform !== "win32") {
+      report.nextSteps.push(
+        `If you already signed in and this still says signed out, your keyring does not reach the plugin's own agy profile: sign in there once with \`HOME="${report.profile}" agy\`.`
+      );
+    }
+  } else if (report.signIn && !report.signIn.signedIn) {
+    report.nextSteps.push(`\`agy models\` failed (${report.signIn.message}). Run \`agy\` in a terminal to see what it reports.`);
+  }
+  if (report.model.available === false) {
+    report.nextSteps.push(
+      `This account does not offer \`${report.model.resolved}\`. Pick a model from the list above and pass \`--model <model>\`, or set GEMINI_COMPANION_MODEL.`
+    );
+  }
+  if (report.live && !report.live.ok) {
+    report.nextSteps.push(report.live.hint);
+  }
+  if (report.signIn?.signedIn && report.model.available !== false && !report.live) {
+    report.nextSteps.push("Run `/gemini:setup --check` to confirm with a live request.");
+  }
+  report.ready = report.agy.installed && report.signIn?.signedIn === true && report.model.available !== false && (report.live ? report.live.ok : true);
+  return report;
+}
+
+async function geminiCliSetupReport(backend, options) {
   const launch = resolveGeminiLaunch();
   const npmProbe = runShellLine("npm --version");
+  const geminiVersion = launch ? getGeminiVersion(launch) : null;
   const report = {
+    backend: backend.name,
     ready: false,
-    node: { version: process.version, supported: Number(process.versions.node.split(".")[0]) >= 20 },
+    node: nodeReport(),
     npm: { available: npmProbe.status === 0, version: npmProbe.status === 0 ? npmProbe.stdout.trim() : null },
-    gemini: launch ? { installed: true, version: getGeminiVersion(launch), source: launch.source } : { installed: false },
+    gemini: launch
+      ? { installed: true, version: geminiVersion, supported: isSupportedGeminiVersion(geminiVersion), source: launch.source }
+      : { installed: false },
     auth: getAuthStatus(),
     live: null,
     defaultModel: process.env.GEMINI_COMPANION_MODEL?.trim() || null,
@@ -286,17 +369,19 @@ async function handleSetup(argv) {
   };
 
   if (options.check && launch) {
-    report.live = await runLiveCheck(launch, resolveModel(options));
+    report.live = await runLiveCheck(backend, launch, resolveModel(options));
   }
 
   if (!report.gemini.installed) {
     report.nextSteps.push(
       report.npm.available ? `Install the Gemini CLI: \`${INSTALL_COMMAND}\`` : `Install Node.js 20+ (includes npm), then run \`${INSTALL_COMMAND}\`.`
     );
+  } else if (report.gemini.supported === false) {
+    report.nextSteps.push(`Update the Gemini CLI to ${MIN_GEMINI_VERSION} or newer: \`${INSTALL_COMMAND}\``);
   } else if (!report.auth.configured) {
     report.nextSteps.push(
-      "Sign in once: open a terminal, run `gemini`, choose **Sign in with Google**, finish in the browser, then type `/quit`. " +
-        "Alternatively put `GEMINI_API_KEY=<key>` (from https://aistudio.google.com/app/apikey) in `~/.gemini/.env`."
+      "Set up a sign-in the Gemini CLI still accepts: `GEMINI_API_KEY=<key>` in `~/.gemini/.env`, Vertex AI, or a Gemini Code Assist Standard or Enterprise account (run `gemini` in a terminal to choose). " +
+        "For a personal Google account, use the default Antigravity CLI backend instead."
     );
   }
   if (report.live && !report.live.ok) {
@@ -305,35 +390,38 @@ async function handleSetup(argv) {
   if (report.gemini.installed && report.auth.configured && !report.live) {
     report.nextSteps.push("Run `/gemini:setup --check` to confirm with a live request.");
   }
-  report.ready = report.gemini.installed && report.auth.configured && (report.live ? report.live.ok : true);
-
-  write(options.json ? JSON.stringify(report, null, 2) : render.renderSetup(report));
+  report.ready =
+    report.gemini.installed && report.gemini.supported !== false && report.auth.configured && (report.live ? report.live.ok : true);
+  return report;
 }
 
-async function runLiveCheck(launch, model) {
-  // An empty scratch folder keeps Gemini from scanning a real project.
+async function runLiveCheck(backend, launch, model) {
+  // An empty scratch folder keeps Gemini from scanning a real project. The
+  // Gemini CLI never trusts it interactively, so it is trusted for this run only.
   const cwd = path.join(dataRoot(), "live-check");
   fs.mkdirSync(cwd, { recursive: true });
   try {
-    const run = await runGemini({
+    const run = await backend.run({
       launch,
       cwd,
+      env: backend.name === "gemini-cli" ? { GEMINI_CLI_TRUST_WORKSPACE: "true" } : {},
       prompt: "Connectivity check from the Claude Code gemini plugin.",
       finalInstruction: "Reply with exactly the single word READY.",
-      approvalMode: "default",
-      policyFiles: [REVIEW_POLICY],
+      write: false,
+      web: false,
+      structured: false,
       model,
-      sessionId: randomUUID(),
       timeoutMs: 120_000
     });
-    if (isRunSuccessful(run)) {
-      return { ok: true, durationMs: run.durationMs, models: modelsUsed(run) };
+    if (backend.isRunSuccessful(run)) {
+      return { ok: true, durationMs: run.durationMs, models: backend.modelsUsed(run) };
     }
-    const failure = classifyFailure(run);
+    const failure = backend.classifyFailure(run);
     const excerpt = [run.stderr, ...run.errors].filter(Boolean).join("\n").trim().split(/\r?\n/).slice(-12).join("\n");
     return { ok: false, kind: failure.kind, message: failure.message, hint: failure.hint, excerpt };
   } catch (error) {
-    return { ok: false, kind: "error", message: error.message, hint: "Run `gemini` in a terminal to see what it reports." };
+    const command = backend.name === "agy" ? "agy" : "gemini";
+    return { ok: false, kind: "error", message: error.message, hint: `Run \`${command}\` in a terminal to see what it reports.` };
   }
 }
 
@@ -344,6 +432,7 @@ async function handleReview(argv, kind) {
     aliasMap: { C: "cwd", m: "model" }
   });
 
+  const backend = getBackend();
   const repoRoot = requireRepoRoot(resolveCwd(options));
   const target = resolveReviewTarget(repoRoot, { base: options.base, scope: options.scope });
   const context = collectReviewContext(repoRoot, target, { maxInlineBytes: resolveDiffBudget(options) });
@@ -353,36 +442,38 @@ async function handleReview(argv, kind) {
     return;
   }
 
-  const launch = requireLaunch();
+  const launch = requireLaunch(backend);
   const focus = positionals.join(" ").trim();
   const job = createJob({
     kind,
     title: `Gemini ${label}`,
     summary: `${label} of ${target.label}${focus ? ` (focus: ${shorten(focus, 60)})` : ""}`,
     workspaceRoot: repoRoot,
-    targetLabel: target.label
+    targetLabel: target.label,
+    backend: backend.name
   });
 
-  const run = await executeJob(job, {
+  // Reviews stay grounded in the repository: no edits, no web.
+  const run = await executeJob(job, backend, {
     launch,
     cwd: repoRoot,
-    prompt: buildReviewPrompt(kind, context, focus),
+    prompt: buildReviewPrompt(kind, context, focus, backend.prompt),
     finalInstruction: REVIEW_FINAL_INSTRUCTION,
-    approvalMode: "default",
-    policyFiles: [REVIEW_POLICY],
+    write: false,
+    web: false,
+    structured: true,
     model: resolveModel(options),
-    sessionId: randomUUID(),
     timeoutMs: resolveTimeoutMs(options, kind)
   });
 
   let output;
   let review = null;
-  if (isRunSuccessful(run)) {
-    review = parseReview(run.text);
+  if (backend.isRunSuccessful(run)) {
+    review = parseReview(run.text, run.structured);
     output = render.renderReview({ label, context, focus, review, answer: run.text, job });
     finishJob(job, "completed", output, review ? `${review.verdict}: ${shorten(review.summary, 90)}` : shorten(firstLine(run.text), 90));
   } else {
-    const failure = classifyFailure(run);
+    const failure = backend.classifyFailure(run);
     output = render.renderFailure({ title: `Gemini ${label}`, failure, run, job });
     finishJob(job, "failed", output, failure.message);
     process.exitCode = 1;
@@ -400,26 +491,28 @@ async function handleConsult(argv, kind) {
     throw new Error("Choose either --resume or --fresh, not both.");
   }
 
+  const backend = getBackend();
   const cwd = resolveCwd(options);
   const workspaceRoot = workspaceRootFor(cwd);
   const writeMode = kind === "task" && Boolean(options.write) && !options["read-only"];
   const request = await readRequest(cwd, options, positionals);
-  const resumeSessionId = resolveResumeSession(workspaceRoot, options);
+  const resumeSessionId = resolveResumeSession(workspaceRoot, options, backend);
   if (!request && !resumeSessionId) {
     throw new Error("Nothing to send to Gemini: give the request as text, with --prompt-file, or on stdin.");
   }
-  const launch = requireLaunch();
+  const launch = requireLaunch(backend);
 
   const runRequest = {
     cwd: workspaceRoot,
     prompt: resumeSessionId
-      ? buildFollowUpPrompt(request || "Continue where you left off.")
-      : buildTaskPrompt({ request, write: writeMode, kind, workspaceRoot }),
+      ? buildFollowUpPrompt({ request: request || "Continue where you left off.", write: writeMode }, backend.prompt)
+      : buildTaskPrompt({ request, write: writeMode, kind, workspaceRoot }, backend.prompt),
     finalInstruction: resumeSessionId ? FOLLOW_UP_FINAL_INSTRUCTION : kind === "ask" ? ASK_FINAL_INSTRUCTION : TASK_FINAL_INSTRUCTION,
-    approvalMode: writeMode ? "auto_edit" : "default",
+    write: writeMode,
+    web: true,
+    structured: false,
     model: resolveModel(options),
     resumeSessionId,
-    sessionId: resumeSessionId ? null : randomUUID(),
     timeoutMs: resolveTimeoutMs(options, kind)
   };
   const jobFields = {
@@ -428,7 +521,8 @@ async function handleConsult(argv, kind) {
     summary: shorten(request || "(continue)", 90),
     workspaceRoot,
     write: writeMode,
-    resumedFrom: resumeSessionId
+    resumedFrom: resumeSessionId,
+    backend: backend.name
   };
 
   if (options.background) {
@@ -452,18 +546,19 @@ async function handleConsult(argv, kind) {
   }
 
   const job = createJob(jobFields);
-  const run = await executeJob(job, { launch, ...runRequest });
-  const output = finalizeConsult(job, run);
+  const run = await executeJob(job, backend, { launch, ...runRequest });
+  const output = finalizeConsult(job, backend, run);
   write(options.json ? JSON.stringify({ job, answer: run.text }, null, 2) : output);
 }
 
-function finalizeConsult(job, run) {
-  if (isRunSuccessful(run)) {
-    const output = render.renderConsult({ job, answer: run.text, editedFiles: job.write ? touchedFiles(run, job.workspaceRoot) : [] });
+function finalizeConsult(job, backend, run) {
+  if (backend.isRunSuccessful(run)) {
+    const editedFiles = job.write ? backend.touchedFiles(run, job.workspaceRoot) : [];
+    const output = render.renderConsult({ job, answer: run.text, editedFiles });
     finishJob(job, "completed", output, shorten(firstLine(run.text), 90));
     return output;
   }
-  const failure = classifyFailure(run);
+  const failure = backend.classifyFailure(run);
   const output = render.renderFailure({ title: job.title, failure, run, job });
   finishJob(job, "failed", output, failure.message);
   process.exitCode = 1;
@@ -477,14 +572,15 @@ async function handleRunJob(argv) {
   if (!job?.request || job.status !== "queued") {
     return;
   }
-  const launch = resolveGeminiLaunch();
+  const backend = getBackend(jobBackend(job));
+  const launch = backend.resolveLaunch();
   if (!launch) {
-    const error = new GeminiUnavailableError();
+    const error = backend.unavailableError();
     finishJob(job, "failed", `${error.message}\n`, error.message);
     return;
   }
-  const run = await executeJob(job, { launch, ...job.request });
-  finalizeConsult(job, run);
+  const run = await executeJob(job, backend, { launch, ...job.request });
+  finalizeConsult(job, backend, run);
 }
 
 function sessionScopedJobs(workspaceRoot, all) {
@@ -587,7 +683,7 @@ function handleResumeCandidate(argv) {
     booleanOptions: ["json"],
     aliasMap: { C: "cwd" }
   });
-  const candidate = findResumeCandidate(workspaceRootFor(resolveCwd(options)));
+  const candidate = findResumeCandidate(workspaceRootFor(resolveCwd(options)), getBackend());
   const payload = {
     available: Boolean(candidate && !candidate.busy),
     busyJob: candidate?.busy?.id ?? null,

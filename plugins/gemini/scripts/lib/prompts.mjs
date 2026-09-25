@@ -1,4 +1,8 @@
 // Builds the prompts sent to Gemini from the templates in ../../prompts.
+//
+// Builders take the backend's prompt options: escapeAt (the Gemini CLI reads
+// @word as a file reference, agy does not) and lockedBuildFiles (the Gemini
+// CLI never lets a headless run edit build files).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -26,10 +30,17 @@ const READ_ONLY_RULES = [
   "- You can read and search files in the repository, and search the web when it genuinely helps."
 ].join("\n");
 
-const WRITE_RULES = [
-  "- You may create and edit files inside this repository with your file-editing tools. Shell commands are disabled, so you cannot build or run tests: list the exact commands Claude should run to verify your changes.",
-  "- Keep edits narrowly scoped to the request: no unrelated refactors, renames or formatting churn."
-].join("\n");
+function writeRules(lockedBuildFiles) {
+  return [
+    "- You may create and edit files inside this repository with your file-editing tools. Shell commands are disabled, so you cannot build or run tests: list the exact commands Claude should run to verify your changes.",
+    lockedBuildFiles
+      ? "- Build and dependency files (package.json, lockfiles, Makefiles, Dockerfiles, go.mod, Cargo.toml, pyproject.toml and similar) cannot be edited in this session. If one needs a change, give the exact change for Claude to apply."
+      : null,
+    "- Keep edits narrowly scoped to the request: no unrelated refactors, renames or formatting churn."
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
 
 function load(name) {
   return fs.readFileSync(path.join(PROMPTS_DIR, `${name}.md`), "utf8");
@@ -42,14 +53,14 @@ function fill(template, values) {
 }
 
 // Escapes at-signs and adds the transport note only when the text needs it.
-function assemble(templateName, values) {
+function assemble(templateName, values, { escapeAt = true } = {}) {
   const body = fill(load(templateName), values);
-  const needsEscape = body.includes("@");
+  const needsEscape = escapeAt && body.includes("@");
   const withNote = body.replace(/\{\{AT_SIGN_NOTE\}\}\r?\n\r?\n/, needsEscape ? `${AT_SIGN_NOTE}\n\n` : "");
   return `${(needsEscape ? escapeAtSigns(withNote) : withNote).trim()}\n`;
 }
 
-export function buildReviewPrompt(kind, context, focus) {
+export function buildReviewPrompt(kind, context, focus, options = {}) {
   const notes = [];
   if (context.truncatedFiles.length) {
     notes.push(`Note: the diff was cut to fit this prompt for these files; read them directly before judging them: ${context.truncatedFiles.join(", ")}`);
@@ -66,19 +77,29 @@ export function buildReviewPrompt(kind, context, focus) {
     USER_FOCUS: focus || "No extra focus provided.",
     REVIEW_INPUT: context.content,
     OUTPUT_CONTRACT: load("review-output-contract").trim()
-  });
+  }, options);
 }
 
-export function buildTaskPrompt({ request, write, kind, workspaceRoot }) {
-  return assemble("task", {
-    WORKSPACE: workspaceRoot,
-    REQUEST_KIND: kind === "ask" ? "asked for your opinion on the request below" : "delegated the request below to you",
-    REQUEST: request,
-    MODE_RULES: write ? WRITE_RULES : READ_ONLY_RULES,
-    WRITE_OUTPUT_NOTE: write ? ', and a "Files changed" list with one line per file describing the change' : ""
-  });
+export function buildTaskPrompt({ request, write, kind, workspaceRoot }, options = {}) {
+  return assemble(
+    "task",
+    {
+      WORKSPACE: workspaceRoot,
+      REQUEST_KIND: kind === "ask" ? "asked for your opinion on the request below" : "delegated the request below to you",
+      REQUEST: request,
+      MODE_RULES: write ? writeRules(options.lockedBuildFiles ?? true) : READ_ONLY_RULES,
+      WRITE_OUTPUT_NOTE: write ? ', and a "Files changed" list with one line per file describing the change' : ""
+    },
+    options
+  );
 }
 
-export function buildFollowUpPrompt(request) {
-  return assemble("follow-up", { REQUEST: request });
+// A conversation can switch between read-only and write turns, so every
+// follow-up restates the rules for its own turn.
+export function buildFollowUpPrompt({ request, write }, options = {}) {
+  return assemble(
+    "follow-up",
+    { REQUEST: request, MODE_RULES: write ? writeRules(options.lockedBuildFiles ?? true) : READ_ONLY_RULES },
+    options
+  );
 }

@@ -1,5 +1,5 @@
-// Parses Gemini's review answer. The CLI cannot enforce a JSON schema, so the
-// object is extracted leniently and normalized before rendering.
+// Parses Gemini's review answer. agy enforces the JSON schema; the Gemini CLI
+// cannot, so there the object is extracted leniently. Both are normalized.
 
 const SEVERITIES = ["critical", "high", "medium", "low"];
 
@@ -16,13 +16,18 @@ export function extractJsonObject(text) {
     attempts.push(trimmed.slice(start, end + 1));
   }
   for (const candidate of attempts) {
-    try {
-      const value = JSON.parse(candidate);
-      if (value && typeof value === "object" && !Array.isArray(value)) {
-        return value;
+    // Gemini may copy the prompt's transport escape ("\@") into its JSON, where
+    // it is not a valid escape; drop a lone backslash before an at-sign.
+    const variants = candidate.includes("\\@") ? [candidate, candidate.replace(/(?<!\\)((?:\\\\)*)\\@/g, "$1@")] : [candidate];
+    for (const variant of variants) {
+      try {
+        const value = JSON.parse(variant);
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          return value;
+        }
+      } catch {
+        // Try the next candidate.
       }
-    } catch {
-      // Try the next candidate.
     }
   }
   return null;
@@ -77,6 +82,8 @@ export function normalizeReview(value) {
   };
 }
 
-export function parseReview(answer) {
-  return normalizeReview(extractJsonObject(answer));
+// agy returns schema-checked output separately; the Gemini CLI only has the text.
+export function parseReview(answer, structured = null) {
+  const value = structured && typeof structured === "object" && !Array.isArray(structured) ? structured : extractJsonObject(answer);
+  return normalizeReview(value);
 }

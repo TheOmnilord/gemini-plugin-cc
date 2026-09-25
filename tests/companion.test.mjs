@@ -1,64 +1,33 @@
+// Tests for the shared companion code and the opt-in Gemini CLI backend.
+
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test, { after } from "node:test";
-import { fileURLToPath } from "node:url";
+import test from "node:test";
 
 import { normalizeArgv, parseArgs, splitRawArgumentString } from "../plugins/gemini/scripts/lib/args.mjs";
-import { escapeAtSigns, restoreAtSigns } from "../plugins/gemini/scripts/lib/gemini.mjs";
+import { escapeAtSigns, isSupportedGeminiVersion, restoreAtSigns } from "../plugins/gemini/scripts/lib/gemini.mjs";
 import { collectReviewContext, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
 import { extractJsonObject, parseReview } from "../plugins/gemini/scripts/lib/review.mjs";
+import { argAfter, argsAfter, captures, companion, git, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
 
-const ROOT = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-const COMPANION = path.join(ROOT, "plugins", "gemini", "scripts", "gemini-companion.mjs");
 const FAKE_GEMINI = path.join(ROOT, "tests", "fixtures", "fake-gemini.mjs");
-
-const createdDirs = [];
-
-function tempDir(prefix) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  createdDirs.push(dir);
-  return dir;
-}
-
-after(() => {
-  for (const dir of createdDirs) {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-    } catch {
-      // A just-killed background process may still hold a file on Windows.
-    }
-  }
-});
-
-function git(cwd, ...args) {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
-  assert.equal(result.status, 0, result.stderr);
-  return result.stdout;
-}
-
-function makeRepo() {
-  const dir = tempDir("gemini-cc-repo-");
-  git(dir, "init", "-q", "-b", "main");
-  git(dir, "config", "user.email", "test@example.com");
-  git(dir, "config", "user.name", "Test");
-  git(dir, "config", "core.autocrlf", "false");
-  fs.writeFileSync(path.join(dir, "app.js"), "export function average(xs) {\n  return xs.reduce((a, b) => a + b, 0) / xs.length;\n}\n");
-  git(dir, "add", "-A");
-  git(dir, "commit", "-q", "-m", "init");
-  return dir;
-}
 
 function makeEnv(extra = {}) {
   const data = tempDir("gemini-cc-data-");
+  // A private GEMINI_CLI_HOME keeps the developer's own ~/.gemini out of the tests.
+  const geminiHome = tempDir("gemini-cc-home-");
   return {
     capture: path.join(data, "capture.jsonl"),
+    geminiHome,
     env: {
+      GEMINI_COMPANION_BACKEND: "gemini-cli",
       GEMINI_COMPANION_CLI: FAKE_GEMINI,
       GEMINI_COMPANION_DATA: data,
       GEMINI_COMPANION_MODEL: "",
+      GEMINI_CLI_HOME: geminiHome,
+      GEMINI_CLI_TRUST_WORKSPACE: "",
       FAKE_GEMINI_CAPTURE: path.join(data, "capture.jsonl"),
       CLAUDE_CODE_SESSION_ID: "test-session",
       ...extra
@@ -66,36 +35,8 @@ function makeEnv(extra = {}) {
   };
 }
 
-function companion(args, { cwd, env, input = "" }) {
-  const result = spawnSync(process.execPath, [COMPANION, ...args], {
-    cwd,
-    input,
-    encoding: "utf8",
-    env: { ...process.env, ...env },
-    timeout: 60_000
-  });
-  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-}
-
-function captures(file) {
-  return fs.readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-}
-
-function argAfter(args, name) {
-  const index = args.indexOf(name);
-  return index === -1 ? null : args[index + 1];
-}
-
-async function waitFor(check, timeoutMs = 20_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = check();
-    if (value) {
-      return value;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error("Timed out waiting for condition.");
+function policyNames(args) {
+  return argsAfter(args, "--policy").map((file) => path.basename(file));
 }
 
 test("splits raw slash-command arguments", () => {
@@ -141,6 +82,18 @@ test("extracts and normalizes review JSON", () => {
   assert.deepEqual(review.findings.map((finding) => finding.title), ["a", "b"]);
   assert.equal(review.findings[0].confidence, 1);
   assert.equal(review.findings[1].lineEnd, 3);
+
+  // An echoed transport escape (\@) is not valid JSON; an escaped backslash (\\@) is.
+  assert.equal(parseReview('{"verdict":"approve","summary":"Keep \\@Override and \\@param","findings":[]}').summary, "Keep @Override and @param");
+  assert.equal(parseReview('{"verdict":"approve","summary":"Keep \\\\@Override","findings":[]}').summary, "Keep \\@Override");
+});
+
+test("checks the minimum Gemini CLI version", () => {
+  assert.equal(isSupportedGeminiVersion("0.41.0"), true);
+  assert.equal(isSupportedGeminiVersion("0.61.0-nightly.20260925"), true);
+  assert.equal(isSupportedGeminiVersion("1.0.0"), true);
+  assert.equal(isSupportedGeminiVersion("0.40.9"), false);
+  assert.equal(isSupportedGeminiVersion("unknown"), null);
 });
 
 test("escapes at-signs for transport and restores them", () => {
@@ -205,7 +158,8 @@ test("review runs Gemini read-only and renders sorted findings", () => {
   const [call] = captures(capture);
   assert.equal(argAfter(call.args, "--approval-mode"), "default");
   assert.equal(argAfter(call.args, "--output-format"), "stream-json");
-  assert.ok(argAfter(call.args, "--policy").endsWith(path.join("policies", "review.toml")));
+  assert.deepEqual(policyNames(call.args), ["no-shell.toml", "no-edits.toml", "review.toml"]);
+  assert.equal(call.env.noColor, "1");
   assert.match(argAfter(call.args, "--session-id"), /^[0-9a-f-]{36}$/);
   assert.match(call.prompt, /\\@param xs numbers/);
   assert.match(call.prompt, /Transport note/);
@@ -240,13 +194,16 @@ test("ask can resume the previous Gemini conversation", () => {
   const [firstCall, secondCall] = captures(capture);
   assert.match(firstCall.prompt, /It's used by the "stats" page\./);
   assert.equal(argAfter(firstCall.args, "--approval-mode"), "default");
+  assert.deepEqual(policyNames(firstCall.args), ["no-shell.toml", "no-edits.toml"]);
   assert.equal(argAfter(secondCall.args, "--resume"), argAfter(firstCall.args, "--session-id"));
   assert.match(secondCall.prompt, /<follow_up>\nWhat about NaN inputs\?\n<\/follow_up>/);
 });
 
-test("task --write uses auto_edit and reports edited files", () => {
+test("task --write uses auto_edit, keeps the user's policies and reports edited files", () => {
   const repo = makeRepo();
-  const { env, capture } = makeEnv();
+  const { env, capture, geminiHome } = makeEnv();
+  const userPolicies = path.join(geminiHome, ".gemini", "policies");
+  fs.mkdirSync(userPolicies, { recursive: true });
   const result = companion(["task", "--write", "--model", "pro"], { cwd: repo, env, input: "Fix the empty-list bug." });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /# Gemini task result \(write mode\)/);
@@ -254,6 +211,8 @@ test("task --write uses auto_edit and reports edited files", () => {
   const [call] = captures(capture);
   assert.equal(argAfter(call.args, "--approval-mode"), "auto_edit");
   assert.equal(argAfter(call.args, "--model"), "pro");
+  assert.deepEqual(argsAfter(call.args, "--policy").slice(1), [userPolicies]);
+  assert.deepEqual(policyNames(call.args).slice(0, 1), ["no-shell.toml"]);
   assert.match(call.prompt, /You may create and edit files inside this repository/);
 });
 
@@ -264,6 +223,36 @@ test("auth failures explain how to sign in", () => {
   assert.equal(result.status, 1);
   assert.match(result.stdout, /not signed in/);
   assert.match(result.stdout, /Sign in with Google/);
+});
+
+test("untrusted folders are explained, and the live check trusts its own scratch folder", () => {
+  const repo = makeRepo();
+  const { env, capture } = makeEnv({ FAKE_GEMINI_MODE: "untrusted" });
+  const asked = companion(["ask"], { cwd: repo, env, input: "hello" });
+  assert.equal(asked.status, 1);
+  assert.match(asked.stdout, /this folder is not trusted/);
+  assert.match(asked.stdout, /Trust folder/);
+
+  const setup = companion(["setup", "--check", "--json"], { cwd: repo, env });
+  assert.equal(setup.status, 0, setup.stderr);
+  assert.equal(JSON.parse(setup.stdout).live.ok, true);
+
+  const [askCall, checkCall] = captures(capture);
+  assert.equal(askCall.env.trust, null);
+  assert.equal(checkCall.env.trust, "true");
+  assert.deepEqual(policyNames(checkCall.args), ["no-shell.toml", "no-edits.toml", "review.toml"]);
+});
+
+test("an outdated Gemini CLI is flagged by setup and by failed runs", () => {
+  const repo = makeRepo();
+  const report = JSON.parse(companion(["setup", "--json"], { cwd: repo, env: makeEnv({ FAKE_GEMINI_VERSION: "0.40.2" }).env }).stdout);
+  assert.equal(report.gemini.supported, false);
+  assert.equal(report.ready, false);
+  assert.match(report.nextSteps.join("\n"), /Update the Gemini CLI to 0\.41\.0 or newer/);
+
+  const result = companion(["ask"], { cwd: repo, env: makeEnv({ FAKE_GEMINI_MODE: "old" }).env, input: "hello" });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /needs version 0\.41\.0 or newer/);
 });
 
 test("background tasks can be followed with status and result", async () => {
@@ -311,6 +300,7 @@ test("setup reports the CLI and sign-in state", () => {
   assert.equal(result.status, 0, result.stderr);
   const report = JSON.parse(result.stdout);
   assert.equal(report.gemini.installed, true);
-  assert.equal(report.gemini.version, "0.0.0-fake");
+  assert.equal(report.gemini.version, "0.61.0");
+  assert.equal(report.gemini.supported, true);
   assert.equal(typeof report.auth.configured, "boolean");
 });

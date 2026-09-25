@@ -1,8 +1,9 @@
 {
   "name": "gemini-plugin-cc",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Claude Code plugin marketplace with a Gemini companion plugin: reviews, sparring and delegated tasks through the Gemini CLI.",
+  "description": "Claude Code plugin marketplace with a Gemini companion plugin: reviews, sparring and delegated tasks through Google's Antigravity CLI or the Gemini CLI.",
+  "license": "MIT",
   "type": "module",
   "engines": {
     "node": ">=20"

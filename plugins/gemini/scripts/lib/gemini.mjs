@@ -8,22 +8,47 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 import { killProcessTree, runCommand, runShellLine } from "./proc.mjs";
 
 export const GEMINI_PACKAGE = "@google/gemini-cli";
 export const INSTALL_COMMAND = "npm install -g @google/gemini-cli";
+// Oldest Gemini CLI release with --session-id, which every run passes.
+export const MIN_GEMINI_VERSION = "0.41.0";
 const AUTH_EXIT_CODE = 41;
 const TURN_LIMIT_EXIT_CODE = 53;
 const INPUT_ERROR_EXIT_CODE = 42;
+const UNTRUSTED_EXIT_CODE = 55;
 const MODEL_PATTERN = /^[A-Za-z0-9._:/-]+$/;
 const WRITE_TOOLS = new Set(["write_file", "replace", "edit", "edit_file", "smart_edit"]);
+const POLICIES_DIR = fileURLToPath(new URL("../../policies", import.meta.url));
 
+// Raised when the selected backend's CLI cannot be found; the companion prints
+// the message as setup guidance instead of a stack trace.
 export class GeminiUnavailableError extends Error {
-  constructor() {
-    super(`The Gemini CLI was not found. Install it with \`${INSTALL_COMMAND}\` (Node.js 20+), then run /gemini:setup.`);
+  constructor(message = `The Gemini CLI was not found. Install it with \`${INSTALL_COMMAND}\` (Node.js 20+), then run /gemini:setup.`) {
+    super(message);
     this.name = "GeminiUnavailableError";
   }
+}
+
+// Every run blocks shell commands, read-only runs also block edits, and runs
+// without web access block web tools. Passing --policy makes the Gemini CLI
+// skip the user's own policy folder, so that folder is passed along too.
+export function geminiPolicyFiles({ write = false, web = true } = {}) {
+  const files = [path.join(POLICIES_DIR, "no-shell.toml")];
+  if (!write) {
+    files.push(path.join(POLICIES_DIR, "no-edits.toml"));
+  }
+  if (!web) {
+    files.push(path.join(POLICIES_DIR, "review.toml"));
+  }
+  const userPolicies = path.join(geminiHomeDir(), "policies");
+  if (fs.existsSync(userPolicies)) {
+    files.push(userPolicies);
+  }
+  return files;
 }
 
 // The Gemini CLI turns "@path" in a prompt into a file lookup (with a fuzzy
@@ -36,9 +61,10 @@ export function restoreAtSigns(text) {
   return String(text ?? "").replace(/\\@/g, "@");
 }
 
+// GEMINI_CLI_HOME replaces the home directory; the CLI's files stay in .gemini under it.
 export function geminiHomeDir() {
   const override = process.env.GEMINI_CLI_HOME?.trim();
-  return override ? path.resolve(override) : path.join(os.homedir(), ".gemini");
+  return path.join(override ? path.resolve(override) : os.homedir(), ".gemini");
 }
 
 function isFile(file) {
@@ -137,6 +163,22 @@ export function getGeminiVersion(launch) {
     : runCommand(launch.command, [...launch.prefixArgs, "--version"], { timeout: 30000 });
   const output = `${result.stdout ?? ""}`.trim().split(/\r?\n/).pop();
   return result.status === 0 && output ? output : null;
+}
+
+// True or false for a recognizable version string, null when it cannot be read.
+export function isSupportedGeminiVersion(version) {
+  const parse = (text) => /(\d+)\.(\d+)\.(\d+)/.exec(String(text ?? ""))?.slice(1).map(Number) ?? null;
+  const actual = parse(version);
+  if (!actual) {
+    return null;
+  }
+  const minimum = parse(MIN_GEMINI_VERSION);
+  for (let index = 0; index < 3; index += 1) {
+    if (actual[index] !== minimum[index]) {
+      return actual[index] > minimum[index];
+    }
+  }
+  return true;
 }
 
 function readJson(file) {
@@ -242,7 +284,8 @@ export function runGemini(options) {
     const log = (line) => options.onLog?.(line);
     const spawnOptions = {
       cwd: options.cwd,
-      env: { ...process.env, ...(options.env ?? {}) },
+      // Fatal errors are colored on stderr; the companion quotes stderr in its reports.
+      env: { ...process.env, NO_COLOR: "1", ...(options.env ?? {}) },
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       detached: process.platform !== "win32"
@@ -413,6 +456,13 @@ export function classifyFailure(run) {
       hint: "Run it in the background (--background), narrow the scope, or raise --timeout-min."
     };
   }
+  if (run.exitCode === UNTRUSTED_EXIT_CODE || /not running in a trusted directory|FatalUntrustedWorkspaceError/i.test(haystack)) {
+    return {
+      kind: "trust",
+      message: "Gemini refused to run because this folder is not trusted (Gemini's folder-trust feature is on).",
+      hint: "Run `gemini` in this repository once and choose “Trust folder”, or set GEMINI_CLI_TRUST_WORKSPACE=true (that trusts every folder)."
+    };
+  }
   if (run.exitCode === AUTH_EXIT_CODE || /Please set an Auth method|UNAUTHENTICATED|invalid_grant|API key not valid|login required|re-?authenticate/i.test(haystack)) {
     return {
       kind: "auth",
@@ -420,11 +470,11 @@ export function classifyFailure(run) {
       hint: "Open a terminal, run `gemini`, choose “Sign in with Google” and finish in the browser, then run /gemini:setup --check."
     };
   }
-  if (/FatalUntrustedWorkspaceError|untrusted (folder|workspace)/i.test(haystack)) {
+  if (/Unknown arguments?:/i.test(haystack)) {
     return {
-      kind: "trust",
-      message: "Gemini refused to run because this folder is not trusted (Gemini's folder-trust feature is on).",
-      hint: "Run `gemini` in this repository once and choose “Trust folder”, or set GEMINI_CLI_TRUST_WORKSPACE=true."
+      kind: "version",
+      message: `The installed Gemini CLI does not accept the plugin's options; the plugin needs version ${MIN_GEMINI_VERSION} or newer.`,
+      hint: `Update it with \`${INSTALL_COMMAND}\`, then run /gemini:setup.`
     };
   }
   if (/RESOURCE_EXHAUSTED|quota|rate[- ]?limit|\b429\b|usage limit/i.test(haystack)) {

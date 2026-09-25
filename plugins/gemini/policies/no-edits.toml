@@ -1,0 +1,11 @@
+# Gemini CLI policy applied by the Claude Code gemini plugin to read-only runs:
+# reviews, asks and tasks without --write.
+# Headless Gemini denies file edits by default, but that built-in rule has the
+# lowest rank, so policies in a trusted repository could allow edits again.
+# This rule is loaded at user level with the highest priority to keep runs read-only.
+
+[[rule]]
+toolName = ["write_file", "replace"]
+decision = "deny"
+priority = 999
+denyMessage = "This Gemini run from Claude Code is read-only. Describe the change instead of making it."

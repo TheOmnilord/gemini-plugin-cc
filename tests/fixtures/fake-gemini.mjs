@@ -13,7 +13,7 @@ const flag = (name) => {
 const mode = process.env.FAKE_GEMINI_MODE ?? "ok";
 
 if (args.includes("--version")) {
-  process.stdout.write("0.0.0-fake\n");
+  process.stdout.write(`${process.env.FAKE_GEMINI_VERSION ?? "0.61.0"}\n`);
   process.exit(0);
 }
 
@@ -25,11 +25,22 @@ process.stdin.on("data", (chunk) => {
 process.stdin.on("end", async () => {
   const prompt = `${input}\n\n${flag("--prompt") ?? ""}`;
   if (process.env.FAKE_GEMINI_CAPTURE) {
-    fs.appendFileSync(process.env.FAKE_GEMINI_CAPTURE, `${JSON.stringify({ args, prompt, cwd: process.cwd() })}\n`);
+    const env = { trust: process.env.GEMINI_CLI_TRUST_WORKSPACE || null, noColor: process.env.NO_COLOR || null };
+    fs.appendFileSync(process.env.FAKE_GEMINI_CAPTURE, `${JSON.stringify({ args, prompt, cwd: process.cwd(), env })}\n`);
   }
   if (mode === "auth") {
     process.stderr.write("Please set an Auth method in your settings.json or specify GEMINI_API_KEY.\n");
     process.exit(41);
+  }
+  if (mode === "untrusted" && process.env.GEMINI_CLI_TRUST_WORKSPACE !== "true") {
+    process.stderr.write(
+      "Gemini CLI is not running in a trusted directory. To proceed, either use `--skip-trust`, set the `GEMINI_CLI_TRUST_WORKSPACE=true` environment variable, or trust this directory in interactive mode.\n"
+    );
+    process.exit(55);
+  }
+  if (mode === "old") {
+    process.stderr.write("Unknown argument: session-id\n");
+    process.exit(1);
   }
 
   const emit = (event) => process.stdout.write(`${JSON.stringify({ timestamp: new Date().toISOString(), ...event })}\n`);

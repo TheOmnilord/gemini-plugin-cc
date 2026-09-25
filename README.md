@@ -1,6 +1,8 @@
 # Gemini plugin for Claude Code
 
-Use Google Gemini from inside Claude Code for code review, adversarial "challenge" review, sparring on designs and plans, and delegated investigations or fixes. The plugin drives the official [Gemini CLI](https://github.com/google-gemini/gemini-cli) in headless mode, so it uses your existing Gemini CLI sign-in (Google account, API key or Vertex AI). Claude Code needs no extra keys.
+Use Google Gemini from inside Claude Code for code review, adversarial "challenge" review, sparring on designs and plans, and delegated investigations or fixes. The plugin drives Google's [Antigravity CLI](https://antigravity.google/docs/cli/install) (`agy`) in headless mode, so it works with a personal Google account: the free plan, or Google AI Pro or Ultra for higher limits. Claude Code needs no extra keys.
+
+Teams that use Gemini through a paid Gemini API key, Vertex AI or Gemini Code Assist Standard or Enterprise can switch the plugin to the [Gemini CLI](#gemini-cli-backend-opt-in) instead. Since June 18, 2026 the Gemini CLI no longer accepts personal Google sign-ins; Google's replacement for those accounts is the Antigravity CLI.
 
 > Unofficial community plugin, not affiliated with or endorsed by Google or Anthropic. The command layout mirrors OpenAI's [codex-plugin-cc](https://github.com/openai/codex-plugin-cc), so the two can sit side by side.
 
@@ -13,17 +15,20 @@ Use Google Gemini from inside Claude Code for code review, adversarial "challeng
 | `/gemini:ask` | An independent second opinion or sparring round on a question, plan or claim (read-only). `--resume` continues the last Gemini conversation, including a review, so you can push back on a finding. |
 | `/gemini:rescue` | Hands an investigation or fix to Gemini through the `gemini-rescue` subagent. Read-only for diagnosis; `--write` lets Gemini edit files. `--background` for long jobs. |
 | `/gemini:status`, `/gemini:result`, `/gemini:cancel` | Follow, read and stop background jobs. |
-| `/gemini:setup` | Checks the Gemini CLI and sign-in; `--check` sends a live test request. |
+| `/gemini:setup` | Checks the Antigravity CLI, the sign-in and the models your account offers; `--check` sends a live test request. |
 
 Claude can also call the `gemini-rescue` subagent on its own when another model's view would help. Reviews only report findings; Claude asks before fixing anything.
 
 ## Requirements
 
 - Claude Code with plugin support
-- Node.js 20+ and npm
-- Git (for reviews)
-- The Gemini CLI: `npm install -g @google/gemini-cli` (`/gemini:setup` offers to install it)
-- A Gemini sign-in, done once in a terminal: run `gemini` and choose **Sign in with Google** (free tier, or Google AI Pro/Ultra for higher limits). Alternatives: `GEMINI_API_KEY=<key>` from [Google AI Studio](https://aistudio.google.com/app/apikey) in `~/.gemini/.env`, or Vertex AI. Google Workspace accounts also need `GOOGLE_CLOUD_PROJECT`; see the [Gemini CLI authentication docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/authentication.md).
+- Node.js 20+ and Git
+- The Antigravity CLI. `/gemini:setup` offers to install it, or run Google's installer yourself:
+  - Windows (PowerShell): `irm https://antigravity.google/cli/install.ps1 | iex`
+  - macOS and Linux: `curl -fsSL https://antigravity.google/cli/install.sh | bash`
+- A sign-in, done once: open a terminal, run `agy`, sign in with your Google account in the browser, then type `/exit`.
+
+Tested on Windows. On macOS and Linux the plugin relies on `agy` keeping its sign-in in the system keyring; if `/gemini:setup` reports you as signed out although `agy` works, it shows a one-time command that signs in the plugin's own profile.
 
 ## Install
 
@@ -41,21 +46,67 @@ Or inside Claude Code: `/plugin marketplace add TheOmnilord/gemini-plugin-cc`, t
 
 ## How it works
 
-- Every command calls [`plugins/gemini/scripts/gemini-companion.mjs`](plugins/gemini/scripts/gemini-companion.mjs), which runs `gemini --output-format stream-json` headlessly with the prompt on stdin.
-- **Reviews** collect the git diff (staged, unstaged and untracked files, or the branch against its merge-base), inline it in the prompt, and ask Gemini for a JSON verdict with findings, which is rendered as Markdown. The diff budget defaults to 600 KB. Lockfile diffs are summarized, and oversized files are cut with a note telling Gemini to read them itself.
-- **Safety:** reviews and asks run with `--approval-mode default`. In headless mode the Gemini CLI's policy engine then denies file edits and shell commands, so Gemini can only read. Reviews also load [`policies/review.toml`](plugins/gemini/policies/review.toml), which switches off web search and fetch. `--write` switches to `--approval-mode auto_edit`: Gemini may edit files inside the repository, but still cannot run shell commands.
-- The Gemini CLI treats `@word` in a prompt as a file reference and pastes in any file that matches, so the companion escapes every `@` before sending and tells Gemini it has done so.
-- Each run gets its own Gemini session ID. `--resume` continues that conversation with `gemini --resume <id>`.
-- Job records and logs are stored per repository in Claude Code's plugin data folder (`~/.claude/plugins/data/gemini-gemini-cc/`).
+- Every command calls [`plugins/gemini/scripts/gemini-companion.mjs`](plugins/gemini/scripts/gemini-companion.mjs), which runs `agy -p "" --input-format stream-json --output-format stream-json` with the prompt on stdin and follows its event stream.
+- **Reviews** collect the git diff (staged, unstaged and untracked files, or the branch against its merge-base), inline it in the prompt, and ask Gemini for a verdict with findings. `agy` enforces the [review schema](plugins/gemini/schemas/review-output.schema.json), and the result is rendered as Markdown. The diff budget defaults to 600 KB. Lockfile diffs are summarized, and oversized files are cut with a note telling Gemini to read them itself.
+- **A private `agy` profile.** Plugin runs use their own `agy` profile in the plugin's data folder, so your own `agy` settings, rules and MCP servers never apply to them, and the plugin's rules never touch yours. The sign-in comes from the system keyring, so signing in to `agy` once covers both.
+- **Safety.** Headless `agy` would approve file writes anywhere on disk, so the profile adds three layers:
+  - The plugin's `gemini-cc` agent offers Gemini file reading and search, file edits and web tools, and no shell, browser or MCP tools.
+  - The profile's settings deny shell commands, browser actions and MCP tools outright.
+  - A guard hook ([`agy-guard.mjs`](plugins/gemini/scripts/agy-guard.mjs)) checks every tool call before it runs. Reads must stay inside the repository. Edits are allowed only in `--write` runs, only inside the repository and never inside `.git`. Web search and fetch are off for reviews and on for asks and tasks. Anything else is denied.
+- **Resume.** `--resume` continues the previous conversation with `agy --conversation <id>`. Each turn restates whether it may edit files, so a review can be followed by `/gemini:rescue --resume --write apply the top fix`.
+- Job records and logs are stored per repository in Claude Code's plugin data folder (`~/.claude/plugins/data/gemini-gemini-cc/`), next to the `agy` profile.
+
+`agy` also loads customizations from a repository's own `.agents/` folder (rules, skills, hooks and MCP servers), and unlike the Gemini CLI its headless runs do not ask whether you trust the folder. Use the plugin on repositories you trust.
+
+## Models
+
+The default is `gemini-3.8-flash-medium`. Pass `--model` to a command or set `GEMINI_COMPANION_MODEL` to change it:
+
+| Alias | Model |
+| --- | --- |
+| `flash`, `auto` | `gemini-3.8-flash-medium` |
+| `flash-high`, `flash-low` | `gemini-3.8-flash-high`, `gemini-3.8-flash-low` |
+| `flash-lite` | `gemini-3.8-flash-low` |
+| `pro`, `pro-low` | `gemini-3.1-pro-high`, `gemini-3.1-pro-low` |
+
+Any other model id from `agy models` works too; `/gemini:setup` lists the models your account offers.
+
+## Gemini CLI backend (opt-in)
+
+For a paid Gemini API key, Vertex AI or Gemini Code Assist Standard or Enterprise, the plugin can drive the [Gemini CLI](https://github.com/google-gemini/gemini-cli) instead. Set `GEMINI_COMPANION_BACKEND=gemini-cli` in the environment Claude Code runs in, for example in `~/.claude/settings.json`:
+
+```json
+{ "env": { "GEMINI_COMPANION_BACKEND": "gemini-cli" } }
+```
+
+Requirements:
+
+- The Gemini CLI 0.41 or newer: `npm install -g @google/gemini-cli` (`/gemini:setup` offers to install or update it).
+- A sign-in the Gemini CLI still accepts: `GEMINI_API_KEY=<key>` in `~/.gemini/.env`, Vertex AI, or a Gemini Code Assist Standard or Enterprise account. See the [Gemini CLI authentication docs](https://github.com/google-gemini/gemini-cli/blob/main/docs/get-started/authentication.md).
+- A trusted folder: the Gemini CLI's folder trust is on by default, and headless runs stop in folders you have not trusted. Run `gemini` once in each repository and choose **Trust folder**, or set `GEMINI_CLI_TRUST_WORKSPACE=true` to trust every folder.
+
+How it differs:
+
+- The companion runs `gemini --output-format stream-json` with the prompt on stdin. Reviews and asks use `--approval-mode default`, so Gemini can only read, and the companion loads the plugin's policies at the highest user priority, so policy files inside a repository cannot loosen them:
+  - [`no-shell.toml`](plugins/gemini/policies/no-shell.toml) blocks shell commands in every run.
+  - [`no-edits.toml`](plugins/gemini/policies/no-edits.toml) blocks file edits in reviews, asks and read-only tasks.
+  - [`review.toml`](plugins/gemini/policies/review.toml) switches off web search and fetch for reviews.
+
+  Passing `--policy` makes the Gemini CLI skip `~/.gemini/policies`, so the companion passes that folder along too.
+- `--write` switches to `--approval-mode auto_edit`. Gemini may then edit files inside the repository but not build files such as `package.json`, lockfiles, Makefiles or Dockerfiles, because the Gemini CLI never lets a headless run edit them.
+- The Gemini CLI treats `@word` in a prompt as a file reference, so the companion escapes every `@` before sending and tells Gemini it has done so.
+- Conversations are kept per backend: `--resume` never continues a conversation that the other backend started.
 
 ## Configuration
 
 | Environment variable | Effect |
 | --- | --- |
-| `GEMINI_COMPANION_MODEL` | Default model: `pro`, `flash`, `flash-lite`, `auto` or a full model id. Unset means the Gemini CLI default (auto routing). |
+| `GEMINI_COMPANION_BACKEND` | `agy` (default) or `gemini-cli`. |
+| `GEMINI_COMPANION_MODEL` | Default model, as an alias or a model id. With the Gemini CLI, unset means its own default (auto routing). |
 | `GEMINI_COMPANION_MAX_DIFF_KB` | Diff budget for reviews, in KB (default 600). |
+| `GEMINI_COMPANION_AGY` | Path to a specific `agy` executable. |
 | `GEMINI_COMPANION_CLI` | Path to a specific Gemini CLI entry script or executable. |
-| `GEMINI_COMPANION_DATA` | Folder for job records and logs. |
+| `GEMINI_COMPANION_DATA` | Folder for job records, logs and the plugin's `agy` profile. |
 
 Per-run flags: `--model <m>`, `--timeout-min <n>`, and for reviews `--max-diff-kb <n>`.
 
@@ -65,4 +116,8 @@ Per-run flags: `--model <m>`, `--timeout-min <n>`, and for reviews `--max-diff-k
 npm test
 ```
 
-The tests run the companion against a fake Gemini CLI ([`tests/fixtures/fake-gemini.mjs`](tests/fixtures/fake-gemini.mjs)), so they need no sign-in. To try a working copy without installing it, start Claude Code with `claude --plugin-dir ./plugins/gemini`.
+The tests run the companion against a fake `agy` ([`tests/fixtures/fake-agy.mjs`](tests/fixtures/fake-agy.mjs)) and a fake Gemini CLI ([`tests/fixtures/fake-gemini.mjs`](tests/fixtures/fake-gemini.mjs)), so they need no sign-in. To try a working copy without installing it, start Claude Code with `claude --plugin-dir ./plugins/gemini`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
