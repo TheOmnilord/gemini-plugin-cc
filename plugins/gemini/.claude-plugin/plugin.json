@@ -7,5 +7,6 @@
   },
   "homepage": "https://github.com/TheOmnilord/gemini-plugin-cc",
   "repository": "https://github.com/TheOmnilord/gemini-plugin-cc",
+  "license": "MIT",
   "keywords": ["gemini", "google", "code-review", "second-opinion", "delegation"]
 }

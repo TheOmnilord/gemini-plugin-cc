@@ -73,3 +73,7 @@ npm test
 ```
 
 The tests run the companion against a fake Gemini CLI ([`tests/fixtures/fake-gemini.mjs`](tests/fixtures/fake-gemini.mjs)), so they need no sign-in. To try a working copy without installing it, start Claude Code with `claude --plugin-dir ./plugins/gemini`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
