@@ -100,6 +100,22 @@ process.stdin.on("end", async () => {
     await new Promise((resolve) => setTimeout(resolve, 120_000));
   }
 
+  if (mode === "cancelled-mid-run") {
+    // A cancel arrives while agy runs, and agy is stopped: file the cancel
+    // marker for the running job, then die the way a killed process does.
+    const state = path.join(process.env.GEMINI_COMPANION_DATA, "state");
+    for (const workspace of fs.readdirSync(state)) {
+      const jobs = path.join(state, workspace, "jobs");
+      for (const name of fs.readdirSync(jobs).filter((file) => file.endsWith(".json"))) {
+        if (JSON.parse(fs.readFileSync(path.join(jobs, name), "utf8")).status === "running") {
+          fs.writeFileSync(path.join(jobs, name.replace(/\.json$/, ".cancel")), "");
+        }
+      }
+    }
+    process.stderr.write("terminated\n");
+    process.exit(1);
+  }
+
   if (mode === "denied") {
     tool("run_command", { CommandLine: "npm test" }, "ERROR", 'permission check failed for command "npm test": user denied permission');
     process.stderr.write("jetski: no output produced — a tool required the \"command\" permission that headless mode cannot prompt for, so it was auto-denied.\n");

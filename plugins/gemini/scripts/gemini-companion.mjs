@@ -35,16 +35,19 @@ import { collectReviewContext, DEFAULT_MAX_INLINE_BYTES, getRepoRoot, requireRep
 import {
   ACTIVE_STATUSES,
   appendLog,
+  cancelJob,
+  cancelRequested,
+  completeJob,
   createJob,
   dataRoot,
   findJob,
   jobFiles,
   listJobs,
   loadJob,
-  nowIso,
   pruneJobs,
   readLogTail,
-  saveJob
+  recordBackendPid,
+  startJob
 } from "./lib/jobs.mjs";
 import { killProcessTree, runShellLine } from "./lib/proc.mjs";
 import {
@@ -195,12 +198,22 @@ async function readRequest(cwd, options, positionals) {
   return [positionals.join(" ").trim(), piped].filter(Boolean).join("\n\n");
 }
 
+// Returns null when the job was cancelled (before Gemini started, or while it
+// was starting and had to be stopped here), or when another process already
+// started it. A cancel during the run usually stops this process instead.
 async function executeJob(job, backend, request) {
-  job.status = "running";
-  job.pid = process.pid;
-  job.startedAt = nowIso();
-  job.model = request.model ?? null;
-  saveJob(job);
+  if (!startJob(job, { model: request.model ?? null })) {
+    appendLog(job.logFile, "Not started: the job was cancelled, or another process started it.");
+    return null;
+  }
+  const stopIfCancelled = () => {
+    if (!cancelRequested(job.workspaceRoot, job.id)) {
+      return false;
+    }
+    appendLog(job.logFile, "Cancelled by user.");
+    completeJob(job, "cancelled", { errorMessage: "Cancelled by user.", resultSummary: "Cancelled by user." });
+    return true;
+  };
   appendLog(
     job.logFile,
     `${job.title} started (pid ${process.pid}, ${backend.label}, ${request.write ? "write" : "read-only"}${request.model ? `, model ${request.model}` : ""}${
@@ -215,14 +228,23 @@ async function executeJob(job, backend, request) {
       onLog: (line) => appendLog(job.logFile, line),
       onSpawn: (child) => {
         activeChildren.add(child);
-        job.geminiPid = child.pid;
-        saveJob(job);
+        // A cancel that landed while Gemini was starting could not stop it yet.
+        if (!recordBackendPid(job, child.pid)) {
+          killProcessTree(child.pid);
+        }
       },
       onExit: (child) => activeChildren.delete(child)
     });
   } catch (error) {
+    if (stopIfCancelled()) {
+      return null;
+    }
     finishJob(job, "failed", `${error.message}\n`, error.message);
     throw error;
+  }
+  // Stopped by a cancel rather than failed: not reported as a failure.
+  if (stopIfCancelled()) {
+    return null;
   }
 
   job.geminiSessionId = run.sessionId ?? request.resumeSessionId ?? null;
@@ -245,15 +267,11 @@ function finishJob(job, status, output, summary) {
   fs.mkdirSync(path.dirname(files.result), { recursive: true });
   fs.writeFileSync(files.result, output, "utf8");
   // A cancel issued while Gemini was running wins over the late result.
-  const onDisk = loadJob(job.workspaceRoot, job.id);
-  job.status = onDisk?.status === "cancelled" ? "cancelled" : status;
-  job.completedAt = nowIso();
-  job.resultFile = files.result;
-  job.resultSummary = summary;
-  if (status === "failed" && !job.errorMessage) {
-    job.errorMessage = summary;
-  }
-  saveJob(job);
+  completeJob(job, status, {
+    resultFile: files.result,
+    resultSummary: summary,
+    ...(status === "failed" && !job.errorMessage ? { errorMessage: summary } : {})
+  });
   pruneJobs(job.workspaceRoot);
 }
 
@@ -485,6 +503,10 @@ async function handleReview(argv, kind) {
     model: resolveModel(options),
     timeoutMs: resolveTimeoutMs(options, kind)
   });
+  if (!run) {
+    write(`Gemini job \`${job.id}\` was cancelled.\n`);
+    return;
+  }
 
   let output;
   let review = null;
@@ -562,19 +584,20 @@ async function handleConsult(argv, kind) {
       stdio: "ignore",
       windowsHide: true
     });
+    // The worker records its own pid when it starts the run (executeJob).
+    // Writing it from here too could overwrite a status the worker had
+    // already moved on; a worker that never starts is caught by reconcile().
     worker.unref();
-    // The worker records its own pid once it starts; only fill it in if it has not.
-    const queued = loadJob(workspaceRoot, job.id);
-    if (queued?.status === "queued" && !queued.pid) {
-      queued.pid = worker.pid;
-      saveJob(queued);
-    }
     write(options.json ? JSON.stringify({ jobId: job.id, status: "queued" }, null, 2) : render.renderQueued(job));
     return;
   }
 
   const job = createJob(jobFields);
   const run = await executeJob(job, backend, { launch, ...runRequest });
+  if (!run) {
+    write(`Gemini job \`${job.id}\` was cancelled.\n`);
+    return;
+  }
   const output = finalizeConsult(job, backend, run);
   write(options.json ? JSON.stringify({ job, answer: run.text }, null, 2) : output);
 }
@@ -608,7 +631,9 @@ async function handleRunJob(argv) {
     return;
   }
   const run = await executeJob(job, backend, { launch, ...job.request });
-  finalizeConsult(job, backend, run);
+  if (run) {
+    finalizeConsult(job, backend, run);
+  }
 }
 
 function sessionScopedJobs(workspaceRoot, all) {
@@ -678,23 +703,21 @@ function handleCancel(argv) {
   });
   const workspaceRoot = workspaceRootFor(resolveCwd(options));
   const reference = positionals[0];
-  const job = reference
+  let job = reference
     ? findJob(workspaceRoot, reference)
     : sessionScopedJobs(workspaceRoot, false).jobs.find((candidate) => ACTIVE_STATUSES.has(candidate.status));
   if (!job) {
     write(reference ? `No Gemini job matches "${reference}" in this repository.` : "No running Gemini job to cancel.");
     return;
   }
-  if (!ACTIVE_STATUSES.has(job.status)) {
-    write(`Gemini job \`${job.id}\` already finished (${job.status}).`);
+  // A worker that has not recorded its pid yet sees the cancel and never
+  // starts Gemini; one that has is stopped below (see cancelJob).
+  const { job: current, cancelled } = cancelJob(workspaceRoot, job.id);
+  if (!cancelled) {
+    write(`Gemini job \`${job.id}\` already finished (${current?.status ?? job.status}).`);
     return;
   }
-
-  job.status = "cancelled";
-  job.completedAt = nowIso();
-  job.errorMessage = "Cancelled by user.";
-  job.resultSummary = "Cancelled by user.";
-  saveJob(job);
+  job = current;
   if (job.geminiPid) {
     killProcessTree(job.geminiPid);
   }

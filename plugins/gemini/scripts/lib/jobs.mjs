@@ -13,6 +13,8 @@ import { isProcessAlive } from "./proc.mjs";
 const PLUGIN_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const MAX_FINISHED_JOBS = 40;
 const STALE_AFTER_MS = 6 * 60 * 60 * 1000;
+// A background worker records its pid when it starts the run, within a second or two.
+const NEVER_STARTED_AFTER_MS = 2 * 60 * 1000;
 export const ACTIVE_STATUSES = new Set(["queued", "running"]);
 
 export function nowIso() {
@@ -57,7 +59,10 @@ export function jobFiles(workspaceRoot, id) {
   return {
     record: path.join(dir, `${id}.json`),
     log: path.join(dir, `${id}.log`),
-    result: path.join(dir, `${id}.md`)
+    result: path.join(dir, `${id}.md`),
+    // One-way markers, created atomically and never removed while the job is kept.
+    started: path.join(dir, `${id}.started`),
+    cancel: path.join(dir, `${id}.cancel`)
   };
 }
 
@@ -68,21 +73,122 @@ function newJobId(kind) {
   return `${kind}-${stamp}-${randomBytes(2).toString("hex")}`;
 }
 
+function pause(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+const RENAME_DEADLINE_MS = 1000;
+
+// Windows refuses to rename over a file while another process has it open,
+// which status polling and background workers do all the time. The readers
+// let go within milliseconds, so the rename is retried: writing the record
+// in place instead would let a reader see it empty or half-written.
+function replaceFile(temporary, target) {
+  const deadline = Date.now() + RENAME_DEADLINE_MS;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.renameSync(temporary, target);
+      return true;
+    } catch (error) {
+      if (!["EPERM", "EACCES", "EBUSY"].includes(error.code) || Date.now() >= deadline) {
+        return false;
+      }
+      pause(Math.min(5 + attempt * 5, 50, Math.max(1, deadline - Date.now())));
+    }
+  }
+}
+
 export function saveJob(job) {
   const { record } = jobFiles(job.workspaceRoot, job.id);
   fs.mkdirSync(path.dirname(record), { recursive: true });
   job.updatedAt = nowIso();
   const payload = `${JSON.stringify(job, null, 2)}\n`;
   const temporary = `${record}.${process.pid}.tmp`;
-  try {
-    fs.writeFileSync(temporary, payload, "utf8");
-    fs.renameSync(temporary, record);
-  } catch {
-    // Windows can refuse the rename while another process reads the file.
+  fs.writeFileSync(temporary, payload, "utf8");
+  if (!replaceFile(temporary, record)) {
+    // Last resort after a second of refusals.
     fs.writeFileSync(record, payload, "utf8");
     fs.rmSync(temporary, { force: true });
   }
   return job;
+}
+
+// Starting and cancelling a job happen in different processes. After a job is
+// created, only the process running it writes its record; a cancel and a
+// status check never do, so they cannot overwrite the pids or the result it
+// publishes. What they need to say lives in marker files that are created
+// atomically and never removed while the job is kept: <id>.started (only one
+// process can claim a job) and <id>.cancel. Each side records its own fact
+// before it checks the other's: a worker saves its pid, then looks for a
+// cancel; a cancel creates its marker, then reads the pids. Whatever the
+// interleaving, the worker sees the cancel or the cancel sees the pid. A
+// requested cancel always wins in the status shown (see jobView). Nothing is
+// ever held, so nothing can be left locked by a crash.
+
+// Creates a marker file; false when it already exists.
+function createMarker(file) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  try {
+    fs.closeSync(fs.openSync(file, "wx"));
+    return true;
+  } catch (error) {
+    if (error.code === "EEXIST") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+export function cancelRequested(workspaceRoot, id) {
+  return fs.existsSync(jobFiles(workspaceRoot, id).cancel);
+}
+
+function markCancelled(job) {
+  Object.assign(job, { status: "cancelled", completedAt: job.completedAt ?? nowIso(), errorMessage: "Cancelled by user.", resultSummary: "Cancelled by user." });
+  return saveJob(job);
+}
+
+// Claims the job for this process and records it as running. Returns false,
+// without anything started, when another process claimed it first or a
+// cancel was requested.
+export function startJob(job, fields = {}) {
+  if (!createMarker(jobFiles(job.workspaceRoot, job.id).started)) {
+    return false;
+  }
+  Object.assign(job, fields, { status: "running", pid: process.pid, startedAt: nowIso() });
+  saveJob(job);
+  if (cancelRequested(job.workspaceRoot, job.id)) {
+    markCancelled(job);
+    return false;
+  }
+  return true;
+}
+
+// Records the backend's pid. Returns false when a cancel was requested, so the
+// caller stops the process it just started.
+export function recordBackendPid(job, pid) {
+  job.geminiPid = pid;
+  saveJob(job);
+  return !cancelRequested(job.workspaceRoot, job.id);
+}
+
+// Saves a finished job; a cancel requested meanwhile wins over the late result.
+export function completeJob(job, status, fields = {}) {
+  const cancelled = cancelRequested(job.workspaceRoot, job.id);
+  Object.assign(job, fields, { status: cancelled ? "cancelled" : status, completedAt: nowIso() });
+  return saveJob(job);
+}
+
+// Requests a cancel and returns the job as now shown, with the pids recorded
+// so far for the caller to stop. cancelled is false when the job had already
+// finished. The record itself is left to the process running the job.
+export function cancelJob(workspaceRoot, id) {
+  const before = loadJob(workspaceRoot, id);
+  if (!before || !ACTIVE_STATUSES.has(jobView(before).status)) {
+    return { job: before && jobView(before), cancelled: false };
+  }
+  createMarker(jobFiles(workspaceRoot, id).cancel);
+  return { job: jobView(loadJob(workspaceRoot, id) ?? before), cancelled: true };
 }
 
 export function createJob(fields) {
@@ -97,51 +203,100 @@ export function createJob(fields) {
   return saveJob(job);
 }
 
+// A record that exists but cannot be read or parsed is retried briefly: it
+// can be caught mid-write by the last-resort path in saveJob.
 export function loadJob(workspaceRoot, id) {
-  try {
-    return JSON.parse(fs.readFileSync(jobFiles(workspaceRoot, id).record, "utf8"));
-  } catch {
-    return null;
+  const { record } = jobFiles(workspaceRoot, id);
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return JSON.parse(fs.readFileSync(record, "utf8"));
+    } catch (error) {
+      if (error.code === "ENOENT" || error.code === "ENOTDIR" || attempt >= 10) {
+        return null;
+      }
+      pause(10);
+    }
   }
 }
 
-// A job whose process vanished without recording a result is marked failed.
-function reconcile(job) {
-  if (!ACTIVE_STATUSES.has(job.status) || !job.pid) {
-    return job;
+function vanished(job) {
+  if (!ACTIVE_STATUSES.has(job.status)) {
+    return false;
   }
   const age = Date.now() - Date.parse(job.startedAt ?? job.createdAt ?? nowIso());
-  if (!isProcessAlive(job.pid) || age > STALE_AFTER_MS) {
-    job.status = "failed";
-    job.errorMessage = job.errorMessage ?? "The Gemini job stopped without recording a result.";
-    job.completedAt = job.completedAt ?? nowIso();
-    saveJob(job);
-  }
-  return job;
+  return job.pid ? !isProcessAlive(job.pid) || age > STALE_AFTER_MS : job.status === "queued" && age > NEVER_STARTED_AFTER_MS;
 }
 
-export function listJobs(workspaceRoot) {
+// The job as status, result and cancel show it, derived from its record and
+// markers without writing anything. A requested cancel wins, also over a
+// result saved after it. A job whose process vanished without recording a
+// result shows as failed, and so does a background job whose worker never
+// started.
+export function jobView(job) {
+  if (cancelRequested(job.workspaceRoot, job.id)) {
+    return job.status === "cancelled"
+      ? job
+      : { ...job, status: "cancelled", completedAt: job.completedAt ?? job.updatedAt, errorMessage: "Cancelled by user.", resultSummary: "Cancelled by user." };
+  }
+  if (!vanished(job)) {
+    return job;
+  }
+  return {
+    ...job,
+    status: "failed",
+    completedAt: job.completedAt ?? job.updatedAt,
+    errorMessage: job.errorMessage ?? (job.pid ? "The Gemini job stopped without recording a result." : "The Gemini job never started.")
+  };
+}
+
+// The job records as saved, before jobView.
+function records(workspaceRoot) {
   let names;
   try {
     names = fs.readdirSync(jobsDir(workspaceRoot)).filter((name) => name.endsWith(".json"));
   } catch {
     return [];
   }
-  const jobs = [];
-  for (const name of names) {
-    const job = loadJob(workspaceRoot, name.slice(0, -".json".length));
-    if (job) {
-      jobs.push(reconcile(job));
-    }
-  }
-  return jobs.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return names.map((name) => loadJob(workspaceRoot, name.slice(0, -".json".length))).filter(Boolean);
 }
 
+function newestFirst(a, b) {
+  return String(b.createdAt).localeCompare(String(a.createdAt));
+}
+
+export function listJobs(workspaceRoot) {
+  return records(workspaceRoot).map(jobView).sort(newestFirst);
+}
+
+// Whether a job can be pruned, judged by what no process can still change
+// rather than by the clock (a worker can be paused for days on a sleeping
+// laptop): it was finished by the process that ran it, or that process is
+// gone. A job that never started is a candidate once it is shown as failed;
+// pruneJobs then closes it for good before deleting it.
+function prunable(job) {
+  if (!ACTIVE_STATUSES.has(job.status)) {
+    return true;
+  }
+  return job.pid ? !isProcessAlive(job.pid) : vanished(job);
+}
+
+// Keeps the newest finished jobs. A job that shows as cancelled but whose
+// worker has not stopped yet keeps its record and markers, so a delayed
+// worker still finds the cancel.
 export function pruneJobs(workspaceRoot) {
-  const finished = listJobs(workspaceRoot).filter((job) => !ACTIVE_STATUSES.has(job.status));
+  const finished = records(workspaceRoot).filter(prunable).sort(newestFirst);
   for (const job of finished.slice(MAX_FINISHED_JOBS)) {
-    for (const file of Object.values(jobFiles(workspaceRoot, job.id))) {
-      fs.rmSync(file, { force: true });
+    const files = jobFiles(workspaceRoot, job.id);
+    const neverStarted = ACTIVE_STATUSES.has(job.status) && !job.pid;
+    // Claiming the start marker, and keeping it, means a worker that turns up
+    // later cannot start the job. If a worker claimed it first, it is kept.
+    if (neverStarted && !createMarker(files.started)) {
+      continue;
+    }
+    for (const [kind, file] of Object.entries(files)) {
+      if (!(neverStarted && kind === "started")) {
+        fs.rmSync(file, { force: true });
+      }
     }
   }
 }
