@@ -68,6 +68,26 @@ test("read-only runs cannot edit, write runs edit only inside the repository", (
   assert.equal(decision("write_to_file", { TargetFile: path.join(profile, ".gemini", "antigravity-cli", "settings.json") }), "deny");
 });
 
+test("edits stay out of every .git, also in nested repositories", () => {
+  const write = (file) => decision("write_to_file", { TargetFile: path.join(workspace, ...file.split("/")) }, { GEMINI_CC_MODE: "write" });
+  // Case is ignored everywhere: Windows and macOS read .GIT as .git.
+  for (const file of ["packages/vendored/.git/hooks/post-checkout", "sub/.git", "a/b/c/.git/config", "sub/.GIT/hooks/pre-commit", ".Git/config"]) {
+    assert.equal(write(file), "deny", file);
+  }
+  // Windows also reads these as .git, and alternate data streams are refused.
+  if (process.platform === "win32") {
+    for (const file of ["sub/.git./hooks/pre-commit", "sub/.git /config", "sub/.git::$INDEX_ALLOCATION/config", "GIT~1:probe", "src/notes.txt:hidden"]) {
+      assert.equal(write(file), "deny", file);
+    }
+    const extended = `\\\\?\\${path.join(workspace, "src", "app.js")}`;
+    assert.equal(decision("write_to_file", { TargetFile: extended }, { GEMINI_CC_MODE: "write" }), "allow");
+  }
+  // Names that only look alike are fine.
+  for (const file of [".github/workflows/ci.yml", "docs/my.git.md", ".gitignore", "src/.gitkeep"]) {
+    assert.equal(write(file), "allow", file);
+  }
+});
+
 test("shell, browser and unknown tools are always denied; bookkeeping is allowed", () => {
   for (const name of ["run_command", "send_command_input", "notebook_execution", "open_browser_url", "call_mcp_tool", "schedule", "brand_new_tool"]) {
     assert.equal(decision(name, {}, { GEMINI_CC_MODE: "write", GEMINI_CC_WEB: "1" }), "deny", name);
@@ -96,8 +116,18 @@ test("pages open only when the run lists their exact address", () => {
   const paths = JSON.stringify(["https://docs.example.com/api/spec", "https://docs.example.com/guide/"]);
   assert.equal(decision("read_url_content", { Url: "https://docs.example.com/api/spec/" }, { GEMINI_CC_WEB_ALLOW: paths }), "allow");
   assert.equal(decision("read_url_content", { Url: "https://docs.example.com/guide" }, { GEMINI_CC_WEB_ALLOW: paths }), "allow");
-  for (const url of ["https://docs.example.com/api/spec//", "https://docs.example.com/api/spec/x", "https://docs.example.com/guide///"]) {
+  for (const url of [
+    "https://docs.example.com/api/spec//",
+    "https://docs.example.com/api/spec/x",
+    "https://docs.example.com/guide//",
+    "https://docs.example.com/guide///"
+  ]) {
     assert.equal(decision("read_url_content", { Url: url }, { GEMINI_CC_WEB_ALLOW: paths }), "deny", url);
+  }
+  // No slash tolerance next to a query, or when the listed address itself ends in "//".
+  const odd = JSON.stringify(["https://docs.example.com/a//", "https://docs.example.com/q?v=2", "https://docs.example.com/r/?v=2"]);
+  for (const url of ["https://docs.example.com/a/", "https://docs.example.com/q?v=2/", "https://docs.example.com/r?v=2"]) {
+    assert.equal(decision("read_url_content", { Url: url }, { GEMINI_CC_WEB_ALLOW: odd }), "deny", url);
   }
   for (const url of [
     "https://docs.example.com/spec?v=2&leak=secret",
@@ -105,6 +135,7 @@ test("pages open only when the run lists their exact address", () => {
     "https://docs.example.com/other",
     "https://evil.test/https://docs.example.com/spec?v=2",
     "http://127.0.0.1:3001/",
+    "http://127.0.0.1:3000//",
     "file:///etc/passwd",
     // Each of these normalizes to a listed page, but agy would send the path as written.
     "https://docs.example.com/SECRET/../spec?v=2",
@@ -148,6 +179,11 @@ test("links out of the repository are followed to where they lead", () => {
   assert.equal(check("list_dir", { DirectoryPath: path.join(repo, "linked") }), "deny");
   assert.equal(check("write_to_file", { TargetFile: path.join(repo, "linked", "new.txt") }, { GEMINI_CC_MODE: "write" }), "deny");
   assert.equal(check("write_to_file", { TargetFile: path.join(repo, "new", "deep", "file.txt") }, { GEMINI_CC_MODE: "write" }), "allow");
+
+  // A link to a nested repository's .git is followed to where it leads.
+  fs.mkdirSync(path.join(repo, "vendored", ".git", "hooks"), { recursive: true });
+  fs.symlinkSync(path.join(repo, "vendored", ".git", "hooks"), path.join(repo, "hooks-link"), "junction");
+  assert.equal(check("write_to_file", { TargetFile: path.join(repo, "hooks-link", "post-checkout") }, { GEMINI_CC_MODE: "write" }), "deny");
 
   // A link whose target does not exist yet: writing through it would create the target outside.
   fs.symlinkSync(path.join(outside, "missing-dir"), path.join(repo, "dangling"), "junction");
