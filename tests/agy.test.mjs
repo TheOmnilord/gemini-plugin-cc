@@ -127,6 +127,40 @@ test("a review that carries on after a refused tool call is shown as usual", () 
   assert.deepEqual(json.refusedTools, ["read_url_content"]);
 });
 
+test("a conversation is busy while a run that continues it is still going", async () => {
+  const repo = makeRepo();
+  const { env } = makeEnv();
+  assert.equal(companion(["ask"], { cwd: repo, env, input: "Is average() safe?" }).status, 0);
+
+  // A background run continues the conversation and takes its time.
+  const slow = { ...env, FAKE_AGY_MODE: "slow" };
+  const started = companion(["task", "--background", "--resume-last"], { cwd: repo, env: slow, input: "Dig deeper." });
+  const jobId = /as `([^`]+)`/.exec(started.stdout)?.[1];
+  assert.ok(jobId, started.stdout);
+  const running = await waitFor(() => {
+    const job = JSON.parse(companion(["status", jobId, "--json"], { cwd: repo, env }).stdout);
+    return job.status === "running" && job.geminiPid ? job : null;
+  });
+  try {
+    const candidate = JSON.parse(companion(["resume-candidate", "--json"], { cwd: repo, env }).stdout);
+    assert.equal(candidate.available, false);
+    assert.equal(candidate.busyJob, jobId);
+    const second = companion(["ask", "--resume-last"], { cwd: repo, env, input: "And NaN?" });
+    assert.equal(second.status, 1);
+    assert.match(second.stderr, new RegExp(`${jobId} is still running in that conversation`));
+  } finally {
+    companion(["cancel", jobId], { cwd: repo, env });
+    await waitFor(() => {
+      try {
+        process.kill(running.geminiPid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+  }
+});
+
 test("ask can continue the same agy conversation, with web access", () => {
   const repo = makeRepo();
   const { env, capture } = makeEnv();

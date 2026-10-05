@@ -285,7 +285,10 @@ function findResumeCandidate(workspaceRoot, backend) {
   if (!job) {
     return null;
   }
-  const busy = jobs.find((other) => ACTIVE_STATUSES.has(other.status) && other.geminiSessionId === job.geminiSessionId) ?? null;
+  // A run that continues the conversation names it in resumedFrom; its
+  // geminiSessionId is only recorded once the run is over.
+  const busy =
+    jobs.find((other) => ACTIVE_STATUSES.has(other.status) && [other.geminiSessionId, other.resumedFrom].includes(job.geminiSessionId)) ?? null;
   return { job, busy };
 }
 
