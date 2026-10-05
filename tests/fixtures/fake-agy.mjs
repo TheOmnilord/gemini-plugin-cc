@@ -111,7 +111,15 @@ process.stdin.on("end", async () => {
 
   let answer;
   let structured = null;
-  if (flag("--json-schema")) {
+  if (mode.startsWith("web-refused")) {
+    tool("read_url_content", { Url: "https://example.com/spec" }, "ERROR", "tool call denied by pre-tool hook: Web access is off for this Gemini run.");
+  }
+  if (mode === "web-refused" && flag("--json-schema")) {
+    // Gives up after the refusal, as Gemini sometimes does.
+    structured = { verdict: "approve", summary: "Could not review: read_url is not permitted. Add a read_url permission.", findings: [], next_steps: [] };
+    tool("finish", structured);
+    answer = JSON.stringify(structured);
+  } else if (flag("--json-schema")) {
     structured = {
       verdict: "needs-attention",
       summary: "average() divides by zero for an empty list.",

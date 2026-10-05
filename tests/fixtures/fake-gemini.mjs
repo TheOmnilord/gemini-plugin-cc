@@ -52,8 +52,19 @@ process.stdin.on("end", async () => {
   emit({ type: "tool_use", tool_name: "read_file", tool_id: "t1", parameters: { file_path: "app.js" } });
   emit({ type: "tool_result", tool_id: "t1", status: "success", output: "(file contents)" });
 
+  if (mode === "web-refused") {
+    emit({ type: "tool_use", tool_name: "web_fetch", tool_id: "t3", parameters: { prompt: "Read https://example.com/spec" } });
+    emit({ type: "tool_result", tool_id: "t3", status: "error", error: { type: "policy_violation", message: "Tool execution denied by policy. Web access is off for reviews." } });
+  } else if (mode === "missing-file") {
+    // An ordinary failure, not a refusal, although the file is called policy.json.
+    emit({ type: "tool_use", tool_name: "read_file", tool_id: "t4", parameters: { file_path: "policy.json" } });
+    emit({ type: "tool_result", tool_id: "t4", status: "error", error: { type: "file_not_found", message: "File not found: policy.json" } });
+  }
+
   let answer;
-  if (prompt.includes("<output_contract>")) {
+  if (prompt.includes("<output_contract>") && ["web-refused", "missing-file"].includes(mode)) {
+    answer = JSON.stringify({ verdict: "approve", summary: "Nothing material.", findings: [], next_steps: [] });
+  } else if (prompt.includes("<output_contract>")) {
     answer = JSON.stringify({
       verdict: "needs-attention",
       summary: "average() divides by zero for an empty list.",

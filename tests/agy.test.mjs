@@ -89,6 +89,40 @@ test("review runs through agy read-only, without web, with the review schema", (
   assert.match(call.message, /\/\/ @param xs numbers/);
   assert.doesNotMatch(call.message, /Transport note|\\@/);
   assert.match(call.message, /perform the review now/);
+  assert.match(call.message, /no web access in this review/);
+  assert.doesNotMatch(result.stdout, /Possibly incomplete/);
+});
+
+test("an empty review after a refused tool call is flagged as possibly incomplete", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// see https://example.com/spec\n");
+  const { env } = makeEnv({ FAKE_AGY_MODE: "web-refused" });
+
+  const result = companion(["adversarial-review"], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Possibly incomplete:.*\(`read_url_content`\)/);
+  assert.doesNotMatch(result.stdout, /No material findings/);
+
+  const json = JSON.parse(companion(["review", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(json.possiblyIncomplete, true);
+  assert.deepEqual(json.refusedTools, ["read_url_content"]);
+  const jobs = JSON.parse(companion(["status", "--all", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(jobs.length, 2);
+  jobs.forEach((job) => assert.match(job.resultSummary, /^possibly incomplete:/));
+});
+
+test("a review that carries on after a refused tool call is shown as usual", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const { env } = makeEnv({ FAKE_AGY_MODE: "web-refused-then-review" });
+
+  const result = companion(["review"], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /### 1\. \[high\] Empty list crashes average\(\)/);
+  assert.doesNotMatch(result.stdout, /Possibly incomplete/);
+  const json = JSON.parse(companion(["review", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(json.possiblyIncomplete, false);
+  assert.deepEqual(json.refusedTools, ["read_url_content"]);
 });
 
 test("ask can continue the same agy conversation, with web access", () => {

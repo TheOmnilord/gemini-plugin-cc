@@ -64,6 +64,8 @@ test("shell, browser and unknown tools are always denied; bookkeeping is allowed
 
 test("web tools follow the run's web setting and only reach http(s)", () => {
   assert.equal(decision("search_web", { query: "agy" }), "deny");
+  // The reason tells Gemini to carry on, not to stop and ask for access.
+  assert.match(decide(call("read_url_content", { Url: "https://example.com" }), env()).reason, /cannot be switched on[\s\S]*carry on/);
   assert.equal(decision("search_web", { query: "agy" }, { GEMINI_CC_WEB: "1" }), "allow");
   assert.equal(decision("read_url_content", { Url: "https://example.com" }, { GEMINI_CC_WEB: "1" }), "allow");
   assert.equal(decision("read_url_content", { Url: "file:///etc/passwd" }, { GEMINI_CC_WEB: "1" }), "deny");

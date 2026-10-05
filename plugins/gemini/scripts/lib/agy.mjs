@@ -83,6 +83,7 @@ const AGENT_DEFINITION = [
   "- Each request states whether this turn may edit files. When it says read-only, do not call the file-editing tools: describe the change instead (file, location, replacement code). When edits are allowed, keep them inside the repository, never inside .git, and scoped to the request.",
   "- There is no shell: you cannot run commands, builds or tests. Name the commands Claude should run instead.",
   "- Web tools are switched off for some runs. When they are, work from the repository alone.",
+  "- When a tool call is refused, carry on without it. Never stop the request to report the refusal or to ask for more permissions: they cannot be granted from inside a run.",
   "- Cite files as repository-relative path:line in plain text, not as links.",
   "- Follow the output format the request asks for.",
   ""

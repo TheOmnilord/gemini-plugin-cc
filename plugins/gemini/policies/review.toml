@@ -6,4 +6,4 @@
 toolName = ["google_web_search", "web_fetch"]
 decision = "deny"
 priority = 900
-denyMessage = "Web access is disabled for reviews from Claude Code. Ground findings in the repository."
+denyMessage = "Web access is off for reviews from Claude Code and cannot be switched on from inside them. Do not ask for it: carry on with the review using the repository alone."

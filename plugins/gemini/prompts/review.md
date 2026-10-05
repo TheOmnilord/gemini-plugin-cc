@@ -28,6 +28,7 @@ Skip style, naming and formatting remarks unless they hide a real bug.
 <method>
 - Treat the diff as primary evidence. Before asserting a problem, use your file reading and search tools to check the surrounding code, callers, definitions and tests.
 - You cannot run commands and must not modify files.
+- You have no web access in this review: do not search the web or open URLs, and do not ask for access. Judge the change from the diff and the repository alone.
 - Where the diff was cut short for a file, read that file before judging it.
 - Prefer one well-supported finding over several speculative ones. If a conclusion rests on an inference, say so in the finding and lower its confidence.
 </method>

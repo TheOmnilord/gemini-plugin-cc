@@ -125,7 +125,9 @@ export function decide(payload, env = process.env) {
 
   if (WEB_TOOLS.has(tool)) {
     if (env.GEMINI_CC_WEB !== "1") {
-      return deny("Web access is switched off for this Gemini run from Claude Code. Ground the answer in the repository.");
+      return deny(
+        "Web access is off for this Gemini run from Claude Code and cannot be switched on from inside it. Do not ask for it: carry on with the request using the repository alone."
+      );
     }
     const localUrl = stringValues(args).find((value) => /^[a-z][a-z0-9+.-]*:\/\//i.test(value) && !/^https?:\/\//i.test(value));
     return localUrl ? deny(`Only http and https addresses are allowed: ${localUrl}`) : allow();

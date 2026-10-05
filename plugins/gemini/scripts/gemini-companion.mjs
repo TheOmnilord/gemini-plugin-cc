@@ -57,7 +57,7 @@ import {
   TASK_FINAL_INSTRUCTION
 } from "./lib/prompts.mjs";
 import * as render from "./lib/render.mjs";
-import { parseReview } from "./lib/review.mjs";
+import { parseReview, refusedTools } from "./lib/review.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_TIMEOUT_MINUTES = { review: 20, "adversarial-review": 20, ask: 15, task: 30 };
@@ -468,17 +468,21 @@ async function handleReview(argv, kind) {
 
   let output;
   let review = null;
+  const refused = refusedTools(run);
+  let possiblyIncomplete = false;
   if (backend.isRunSuccessful(run)) {
     review = parseReview(run.text, run.structured);
-    output = render.renderReview({ label, context, focus, review, answer: run.text, job });
-    finishJob(job, "completed", output, review ? `${review.verdict}: ${shorten(review.summary, 90)}` : shorten(firstLine(run.text), 90));
+    possiblyIncomplete = Boolean(review && review.findings.length === 0 && refused.length);
+    output = render.renderReview({ label, context, focus, review, answer: run.text, job, refused: possiblyIncomplete ? refused : [] });
+    const summary = review ? `${possiblyIncomplete ? "possibly incomplete" : review.verdict}: ${shorten(review.summary, 90)}` : shorten(firstLine(run.text), 90);
+    finishJob(job, "completed", output, summary);
   } else {
     const failure = backend.classifyFailure(run);
     output = render.renderFailure({ title: `Gemini ${label}`, failure, run, job });
     finishJob(job, "failed", output, failure.message);
     process.exitCode = 1;
   }
-  write(options.json ? JSON.stringify({ job, review, answer: run.text }, null, 2) : output);
+  write(options.json ? JSON.stringify({ job, review, refusedTools: refused, possiblyIncomplete, answer: run.text }, null, 2) : output);
 }
 
 async function handleConsult(argv, kind) {
