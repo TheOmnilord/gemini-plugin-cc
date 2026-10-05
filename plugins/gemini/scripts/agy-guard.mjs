@@ -87,6 +87,48 @@ function insideAny(file, roots) {
   });
 }
 
+// A path segment as the file system may read it. Case is ignored everywhere,
+// as on Windows and macOS (no real repository has a ".GIT"); Windows also
+// drops trailing dots and spaces and reads "name:stream" as a stream of name.
+function segmentName(part) {
+  const name = part.toLowerCase();
+  return IS_WINDOWS ? name.split(":")[0].replace(/[. ]+$/, "") : name;
+}
+
+// A Windows alternate data stream ("file:stream"). Its base name can be a
+// short name such as GIT~1 that cannot be resolved while the stream does not
+// exist, and no repository edit needs one, so edits to streams are refused.
+function namesStream(file) {
+  if (!IS_WINDOWS) {
+    return false;
+  }
+  const resolved = path.resolve(file).replace(/^\\\\\?\\/, "");
+  return resolved.slice(path.parse(resolved).root.length).includes(":");
+}
+
+// True when a path is inside any .git, at any depth: a nested repository's
+// hooks would run the next time git is used there. Checked on the path as
+// written and on where it really leads.
+function inGitMetadata(file, roots) {
+  const real = realLocation(file);
+  return roots.some((root) => {
+    const realRoot = realLocation(root);
+    return [
+      [path.resolve(file), path.resolve(root)],
+      [real, realRoot]
+    ].some(
+      ([target, base]) =>
+        target &&
+        base &&
+        isInside(target, base) &&
+        path
+          .relative(comparable(base), comparable(target))
+          .split(path.sep)
+          .some((part) => segmentName(part) === ".git")
+    );
+  });
+}
+
 // Path-like arguments (TargetFile, AbsolutePath, SearchDirectory, ...), resolved
 // the way agy resolves them: relative to the workspace, with ~ as the home folder.
 function pathArguments(args, baseDir) {
@@ -134,7 +176,14 @@ function listedExactly(value, allowed) {
     return false;
   }
   const bare = value.split("#")[0];
-  return allowed.includes(bare) || allowed.includes(`${bare}/`) || (bare.endsWith("/") && allowed.includes(bare.slice(0, -1)));
+  if (allowed.includes(bare)) {
+    return true;
+  }
+  // A slash more or less at the end of a path, but only between addresses
+  // with no query (where a slash would change a value) and no "//" (which
+  // some servers route to a different resource).
+  const plain = (url) => !url.includes("?") && !url.endsWith("//");
+  return plain(bare) && allowed.some((url) => plain(url) && (url === `${bare}/` || `${url}/` === bare));
 }
 
 function allowedUrls(env) {
@@ -185,9 +234,7 @@ export function decide(payload, env = process.env) {
     if (!targets.length) {
       return deny(`${tool} did not name its target file, so the edit cannot be checked.`);
     }
-    const outside = targets.find(
-      (file) => !insideAny(file, workspaces) || workspaces.some((root) => insideAny(file, [path.join(root, ".git")]))
-    );
+    const outside = targets.find((file) => !insideAny(file, workspaces) || inGitMetadata(file, workspaces) || namesStream(file));
     return outside ? deny(`Edits must stay inside the repository and outside .git. Not allowed: ${outside}`) : allow();
   }
 
