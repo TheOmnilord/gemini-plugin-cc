@@ -102,6 +102,7 @@ test("an empty review after a refused tool call is flagged as possibly incomplet
   const result = companion(["adversarial-review"], { cwd: repo, env });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Possibly incomplete:.*\(`read_url_content`\)/);
+  assert.match(result.stdout, /\*\*Verdict:\*\* approve \(possibly incomplete\)/);
   assert.doesNotMatch(result.stdout, /No material findings/);
 
   const json = JSON.parse(companion(["review", "--json"], { cwd: repo, env }).stdout);
@@ -188,7 +189,9 @@ test("the private agy profile carries the agent, the guard and the deny rules", 
 
   const settings = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
   assert.equal(settings.keptByAgy, 1);
-  assert.deepEqual(settings.permissions, { allow: ["read_url(*)", "read_file(*)"], deny: ["command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)"] });
+  // File reads are opened for the profile's brain folder only, by its real path.
+  const brain = fs.realpathSync.native(path.join(profile, ".gemini", "antigravity-cli", "brain"));
+  assert.deepEqual(settings.permissions, { allow: ["read_url(*)", `read_file(${brain})`], deny: ["command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)"] });
 
   const configDir = path.join(profile, ".gemini", "config");
   const hooks = JSON.parse(fs.readFileSync(path.join(configDir, "hooks.json"), "utf8"));

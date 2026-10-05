@@ -53,6 +53,9 @@ test("malformed HTML converts in linear time", () => {
   assert.equal(htmlToText("<p>kept</p><script>var x = '</p>';"), "kept");
   assert.equal(htmlToText("<p>kept</p><!-- open comment"), "kept");
   assert.equal(htmlToText("<header>Top</header><head><title>t</title></head>"), "Top");
+  assert.equal(htmlToText('<?xml version="1.0"?><!DOCTYPE html><p>Body</p>'), "Body");
+  // </head> is optional in HTML, so a page without it keeps its body.
+  assert.equal(htmlToText("<html><head><title>Spec</title><style>p{}</style><body><h1>Limits</h1><p>Max 5.</p>"), "# Limits\nMax 5.");
   // Lowercasing U+0130 yields two characters; tag matching must not drift.
   assert.equal(htmlToText("\u0130<p>Visible</p><script>hidden</script>"), "\u0130Visible");
 });
@@ -64,6 +67,9 @@ test("pages are fetched as text, following redirects on the same site only", asy
       "/moved": (request, response) => response.writeHead(301, { location: "/spec" }).end(),
       "/away": (request, response) => response.writeHead(302, { location: "https://elsewhere.test/x" }).end(),
       "/login": (request, response) => response.writeHead(302, { location: `http://user:token@${request.headers.host}/spec` }).end(),
+      "/app": (request, response) =>
+        response.writeHead(200, { "content-type": "text/html" }).end('<!doctype html><html><body><div id="root"></div><script>render()</script></body></html>'),
+      "/empty.txt": (request, response) => response.writeHead(200, { "content-type": "text/plain" }).end("  \n"),
       "/binary.txt": (request, response) => response.writeHead(200, { "content-type": "text/plain" }).end(Buffer.from([0x41, 0x00, 0x42])),
       "/data.json": (request, response) => response.writeHead(200, { "content-type": "application/json" }).end('{"max":5}'),
       "/logo.png": (request, response) => response.writeHead(200, { "content-type": "image/png" }).end("PNG"),
@@ -81,6 +87,9 @@ test("pages are fetched as text, following redirects on the same site only", asy
       await assert.rejects(fetchPage(`${base}/logo.png`), /image\/png, not a text page/);
       await assert.rejects(fetchPage(`${base}/login`), /redirects to an address with a user name or password/);
       await assert.rejects(fetchPage(`${base}/binary.txt`), /not a text page/);
+      // A page with nothing to read stops the review instead of passing in empty.
+      await assert.rejects(fetchPage(`${base}/app`), /no readable text \(it may need JavaScript/);
+      await assert.rejects(fetchPage(`${base}/empty.txt`), /no readable text$/);
       await assert.rejects(fetchPages([`${base}/spec`, `${base}/nope`]), /Could not fetch .*\/nope for the review: HTTP 404/);
     }
   );

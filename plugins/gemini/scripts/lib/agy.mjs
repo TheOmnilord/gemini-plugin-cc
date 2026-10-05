@@ -61,9 +61,19 @@ const GUARD_SOURCE = fileURLToPath(new URL("../agy-guard.mjs", import.meta.url))
 const GUARD_FILE = "gemini-cc-guard.mjs";
 // Headless agy refuses, and ends the run on, any page read and any file read
 // outside the workspace, including the copy of a fetched page that it keeps
-// in the profile. The guard hook runs first and decides both (exact
-// addresses; the repository and the profile), so agy's own checks are lifted.
-const PROFILE_PERMISSIONS = { allow: ["read_url(*)", "read_file(*)"], deny: ["command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)"] };
+// in the profile's brain folder. The guard hook runs first and admits only
+// listed addresses and the current conversation's folder, so agy allows page
+// reads and file reads in brain/, and keeps its own check on other files.
+// agy compares long paths, so the folder is named by its real path (a short
+// 8.3 name such as ADMINI~1 would not match).
+function profilePermissions(cliDir) {
+  const brainDir = path.join(cliDir, "brain");
+  fs.mkdirSync(brainDir, { recursive: true });
+  return {
+    allow: ["read_url(*)", `read_file(${fs.realpathSync.native(brainDir)})`],
+    deny: ["command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)"]
+  };
+}
 // agy starts hook commands through cmd /c or sh -c from the folder that holds
 // hooks.json, and on Windows it mangles quoted arguments, so the guard sits in
 // that folder and is started by its bare name.
@@ -181,7 +191,7 @@ export function ensureAgyProfile(profile = agyProfileDir()) {
     // Missing or unreadable: start from an empty object.
   }
   // Keys agy stores itself are kept; the permissions belong to the plugin.
-  writeIfChanged(settingsFile, `${JSON.stringify({ ...settings, permissions: PROFILE_PERMISSIONS }, null, 2)}\n`);
+  writeIfChanged(settingsFile, `${JSON.stringify({ ...settings, permissions: profilePermissions(cliDir) }, null, 2)}\n`);
   writeIfChanged(path.join(configDir, "hooks.json"), `${JSON.stringify(HOOKS, null, 2)}\n`);
   writeIfChanged(path.join(configDir, GUARD_FILE), fs.readFileSync(GUARD_SOURCE, "utf8"));
   writeIfChanged(path.join(configDir, "agents", `${AGENT}.md`), AGENT_DEFINITION);

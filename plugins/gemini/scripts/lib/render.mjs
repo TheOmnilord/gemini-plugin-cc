@@ -84,8 +84,10 @@ export function renderReview({ label, context, focus, review, answer, job, pages
   if (job?.allowUrls?.length) {
     meta.push(`**Gemini may open:** ${job.allowUrls.join(", ")}`);
   }
+  // The companion passes refused tools only when the review is possibly incomplete.
+  const incomplete = Boolean(review) && review.findings.length === 0 && refused.length > 0;
   if (review) {
-    meta.push(`**Verdict:** ${review.verdict === "approve" ? "approve" : "needs attention"}`);
+    meta.push(`**Verdict:** ${review.verdict === "approve" ? "approve" : "needs attention"}${incomplete ? " (possibly incomplete)" : ""}`);
   }
   lines.push(meta.join("  \n"), "");
   if (context.truncatedFiles.length) {
@@ -98,7 +100,7 @@ export function renderReview({ label, context, focus, review, answer, job, pages
     if (review.summary) {
       lines.push(show(review.summary), "");
     }
-    if (review.findings.length === 0 && refused.length) {
+    if (incomplete) {
       lines.push(
         `> **Possibly incomplete:** Gemini returned no findings after the run refused some of its tool calls (${refused.map((name) => `\`${name}\``).join(", ")}). It may have stopped to report the restriction instead of reviewing the change. Read the summary above before relying on this result, and rerun the review if it did not cover the change.`,
         ""
