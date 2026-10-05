@@ -44,7 +44,7 @@ test("HTML becomes readable text", () => {
 
 test("malformed HTML converts in linear time", () => {
   const size = 5 * 1024 * 1024;
-  for (const unit of ["<script>", "<!--", "<", "<h1", "<a b", "&amp"]) {
+  for (const unit of ["<script>", "<!--", "<", "<h1", "<a b", "&amp", "<pre>", "<pre></pre>"]) {
     const started = Date.now();
     htmlToText(unit.repeat(Math.floor(size / unit.length)));
     assert.ok(Date.now() - started < 3000, `${unit} took ${Date.now() - started} ms`);
@@ -54,6 +54,24 @@ test("malformed HTML converts in linear time", () => {
   assert.equal(htmlToText("<p>kept</p><!-- open comment"), "kept");
   assert.equal(htmlToText("<header>Top</header><head><title>t</title></head>"), "Top");
   assert.equal(htmlToText('<?xml version="1.0"?><!DOCTYPE html><p>Body</p>'), "Body");
+  // Indentation inside <pre> is kept: in code samples and schemas it carries meaning.
+  assert.equal(
+    htmlToText("<p>Example:</p><pre><code>def f():\n    if x:\n        return  1\n</code></pre><p>after   text</p>"),
+    "Example:\n\ndef f():\n    if x:\n        return  1\n\nafter text"
+  );
+  assert.equal(htmlToText("<pre>\n  first: 1\n  second:\n    - &lt;a&gt;</pre>"), "  first: 1\n  second:\n    - <a>");
+  // Entities are decoded after <pre> is known, so none can end it early.
+  assert.equal(htmlToText("<pre>one&#xE001;\n    two&#57345;\n      three</pre>"), "one\uE001\n    two\uE001\n      three");
+  // A nested <pre> stays inside the outer one; a stray </pre> is ignored.
+  assert.equal(htmlToText("<pre>outer\n<pre>inner</pre>\n    outer again</pre><p>x  y</p>"), "outer\ninner\n    outer again\nx y");
+  assert.equal(htmlToText("</pre><p>a   b</p>"), "a b");
+  // Blank lines inside <pre> survive at the start and end of the page; only HTML's first one goes.
+  assert.equal(htmlToText("<pre>\n\n  first\n\n</pre>"), "\n  first\n\n");
+  assert.equal(htmlToText("<p>end</p><pre>  open\n\n"), "end\n\n  open\n\n");
+  // Only a line break directly after <pre> is dropped, not one after a tag inside it.
+  assert.equal(htmlToText("<pre><code>\n  first</code></pre>"), "\n  first");
+  assert.equal(htmlToText("<pre><br>first</pre>"), "\nfirst");
+  assert.equal(htmlToText("<pre>\r\n  crlf</pre>"), "  crlf");
   // </head> is optional in HTML, so a page without it keeps its body.
   assert.equal(htmlToText("<html><head><title>Spec</title><style>p{}</style><body><h1>Limits</h1><p>Max 5.</p>"), "# Limits\nMax 5.");
   // Lowercasing U+0130 yields two characters; tag matching must not drift.
@@ -108,5 +126,9 @@ test("page text cannot close the block it sits in", () => {
   assert.match(block, /untrusted/);
   assert.match(webAccessBlock(["https://a.test/"]), /exactly these addresses[\s\S]*- https:\/\/a\.test\//);
   assert.equal(referenceBlock([]), "");
+  assert.match(
+    referenceBlock([{ url: "http://a.test/old", finalUrl: "https://a.test/new", text: "moved", truncated: true }]),
+    /<page url="http:\/\/a\.test\/old" fetched_from="https:\/\/a\.test\/new" truncated="true">\nmoved\n<\/page>/
+  );
   assert.equal(webAccessBlock([]), "");
 });
