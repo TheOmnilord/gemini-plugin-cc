@@ -109,8 +109,9 @@ function decodeEntities(text) {
   });
 }
 
-// Elements whose content is not text: skipped up to their closing tag.
-const SKIPPED = new Set(["script", "style", "noscript", "svg", "template", "iframe", "head"]);
+// Elements whose content is not text: skipped up to their closing tag, which
+// HTML requires for each of them (unlike </head>, which pages may leave out).
+const SKIPPED = new Set(["script", "style", "noscript", "svg", "template", "iframe", "title"]);
 const BLOCK_END = new Set(["p", "div", "section", "article", "header", "footer", "ul", "ol", "tr", "table", "pre", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "dt", "dd"]);
 
 function tagText(name, closing) {
@@ -163,6 +164,11 @@ export function htmlToText(html) {
     if (close === -1) {
       text += source.slice(open);
       break;
+    }
+    // Declarations and processing instructions (<!doctype html>, <?xml ...?>) are not text.
+    if (source[open + 1] === "!" || source[open + 1] === "?") {
+      index = close + 1;
+      continue;
     }
     const tag = /^(\/?)([a-z][a-z0-9-]*)/.exec(lower.slice(open + 1, Math.min(close, open + 40)));
     if (!tag) {
@@ -251,6 +257,10 @@ export async function fetchPage(address, { fetchImpl = globalThis.fetch, timeout
       }
       const isHtml = /html/i.test(contentType) || (!contentType && /^\s*<(!doctype html|html)\b/i.test(raw));
       const { text, cut } = cutToBytes(isHtml ? htmlToText(raw) : raw.trim(), MAX_PAGE_BYTES);
+      if (!text) {
+        // An empty page would pass silently into the review; say so instead.
+        throw new Error(`it has no readable text${isHtml ? " (it may need JavaScript to show its content)" : ""}`);
+      }
       return { url: address, finalUrl: current, text, truncated: cut || downloadCut };
     }
   } finally {
@@ -287,7 +297,7 @@ export function referenceBlock(pages) {
   ];
   for (const page of pages) {
     const where = page.finalUrl !== page.url ? `${page.url}" fetched_from="${page.finalUrl}` : page.url;
-    parts.push(`<page url="${where}"${page.truncated ? ' truncated="true"' : ""}>`, fence(page.text) || "(the page has no text)", "</page>");
+    parts.push(`<page url="${where}"${page.truncated ? ' truncated="true"' : ""}>`, fence(page.text), "</page>");
   }
   parts.push("</reference_material>");
   return parts.join("\n");

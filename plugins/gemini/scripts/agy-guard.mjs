@@ -126,14 +126,15 @@ function stringValues(value, out = []) {
 // A page may be opened only as the companion listed it (canonical, without a
 // #fragment). The address is compared as written, because agy sends it as
 // written: "/x/../spec" or "%2e%2e" would normalize to a listed page while the
-// request still carries the extra path. "http://host:3000" also matches a
-// listed "http://host:3000/".
+// request still carries the extra path. One trailing "/" more or less is
+// accepted ("/spec/" for a listed "/spec", "http://host:3000" for a listed
+// "http://host:3000/"): a fixed character that cannot carry any data.
 function listedExactly(value, allowed) {
   if (typeof value !== "string") {
     return false;
   }
   const bare = value.split("#")[0];
-  return allowed.includes(bare) || (/^https?:\/\/[^/?#\\\s]+$/i.test(bare) && allowed.includes(`${bare}/`));
+  return allowed.includes(bare) || allowed.includes(`${bare}/`) || (bare.endsWith("/") && allowed.includes(bare.slice(0, -1)));
 }
 
 function allowedUrls(env) {

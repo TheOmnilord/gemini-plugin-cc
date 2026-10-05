@@ -92,6 +92,13 @@ test("pages open only when the run lists their exact address", () => {
   assert.equal(decision("read_url_content", { Url: "https://docs.example.com/spec?v=2" }, { GEMINI_CC_WEB_ALLOW: allow }), "allow");
   assert.equal(decision("read_url_content", { Url: "https://docs.example.com/spec?v=2#limits" }, { GEMINI_CC_WEB_ALLOW: allow }), "allow");
   assert.equal(decision("read_url_content", { Url: "http://127.0.0.1:3000" }, { GEMINI_CC_WEB_ALLOW: allow }), "allow");
+  // One trailing slash more or less is accepted; nothing else is.
+  const paths = JSON.stringify(["https://docs.example.com/api/spec", "https://docs.example.com/guide/"]);
+  assert.equal(decision("read_url_content", { Url: "https://docs.example.com/api/spec/" }, { GEMINI_CC_WEB_ALLOW: paths }), "allow");
+  assert.equal(decision("read_url_content", { Url: "https://docs.example.com/guide" }, { GEMINI_CC_WEB_ALLOW: paths }), "allow");
+  for (const url of ["https://docs.example.com/api/spec//", "https://docs.example.com/api/spec/x", "https://docs.example.com/guide///"]) {
+    assert.equal(decision("read_url_content", { Url: url }, { GEMINI_CC_WEB_ALLOW: paths }), "deny", url);
+  }
   for (const url of [
     "https://docs.example.com/spec?v=2&leak=secret",
     "https://docs.example.com/spec",
