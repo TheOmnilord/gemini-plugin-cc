@@ -57,7 +57,8 @@ import {
   TASK_FINAL_INSTRUCTION
 } from "./lib/prompts.mjs";
 import * as render from "./lib/render.mjs";
-import { parseReview } from "./lib/review.mjs";
+import { fetchPages, normalizeUrls } from "./lib/reference.mjs";
+import { parseReview, refusedTools } from "./lib/review.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_TIMEOUT_MINUTES = { review: 20, "adversarial-review": 20, ask: 15, task: 30 };
@@ -68,10 +69,10 @@ function usage() {
     "Usage: node gemini-companion.mjs <command> [options]",
     "",
     "  setup [--check] [--model <m>] [--json]",
-    "  review [--base <ref>] [--scope auto|working-tree|branch] [--model <m>] [--max-diff-kb <n>] [--timeout-min <n>] [focus]",
+    "  review [--base <ref>] [--scope auto|working-tree|branch] [--model <m>] [--max-diff-kb <n>] [--timeout-min <n>] [--context-url <url>]... [--allow-url <url>]... [focus]",
     "  adversarial-review [same options as review] [focus]",
-    "  ask [--resume-last|--fresh] [--model <m>] [--prompt-file <f>] [--timeout-min <n>] [question | stdin]",
-    "  task [--write] [--background] [--resume-last|--fresh] [--model <m>] [--prompt-file <f>] [--timeout-min <n>] [request | stdin]",
+    "  ask [--resume-last|--fresh] [--model <m>] [--prompt-file <f>] [--timeout-min <n>] [--allow-url <url>]... [question | stdin]",
+    "  task [--write] [--background] [--resume-last|--fresh] [--model <m>] [--prompt-file <f>] [--timeout-min <n>] [--allow-url <url>]... [request | stdin]",
     "  status [job-id] [--all] [--json]",
     "  result [job-id] [--json]",
     "  cancel [job-id] [--json]",
@@ -132,6 +133,16 @@ function resolveDiffBudget(options) {
     throw new Error(`Invalid --max-diff-kb value "${raw}" (minimum 16).`);
   }
   return Math.round(kilobytes * 1024);
+}
+
+// Only agy's guard can hold Gemini to exact addresses; the Gemini CLI's
+// web_fetch takes free text that may name any address.
+function resolveAllowUrls(options, backend) {
+  const urls = normalizeUrls(options["allow-url"], "--allow-url");
+  if (urls.length && backend.name !== "agy") {
+    throw new Error("--allow-url needs the Antigravity CLI backend: the Gemini CLI cannot limit Gemini to exact addresses. Use --context-url for reviews instead.");
+  }
+  return urls;
 }
 
 function requireLaunch(backend) {
@@ -428,11 +439,14 @@ async function runLiveCheck(backend, launch, model) {
 async function handleReview(argv, kind) {
   const { options, positionals } = parseArgs(normalizeArgv(argv), {
     valueOptions: ["base", "scope", "model", "cwd", "max-diff-kb", "timeout-min"],
+    listOptions: ["context-url", "allow-url"],
     booleanOptions: ["json", "wait", "background"],
     aliasMap: { C: "cwd", m: "model" }
   });
 
   const backend = getBackend();
+  const contextUrls = normalizeUrls(options["context-url"], "--context-url");
+  const allowUrls = resolveAllowUrls(options, backend);
   const repoRoot = requireRepoRoot(resolveCwd(options));
   const target = resolveReviewTarget(repoRoot, { base: options.base, scope: options.scope });
   const context = collectReviewContext(repoRoot, target, { maxInlineBytes: resolveDiffBudget(options) });
@@ -443,6 +457,9 @@ async function handleReview(argv, kind) {
   }
 
   const launch = requireLaunch(backend);
+  // Every page is fetched before Gemini starts, so one that cannot be read
+  // stops the review instead of leaving it silently without that page.
+  const pages = await fetchPages(contextUrls);
   const focus = positionals.join(" ").trim();
   const job = createJob({
     kind,
@@ -450,17 +467,20 @@ async function handleReview(argv, kind) {
     summary: `${label} of ${target.label}${focus ? ` (focus: ${shorten(focus, 60)})` : ""}`,
     workspaceRoot: repoRoot,
     targetLabel: target.label,
-    backend: backend.name
+    backend: backend.name,
+    contextUrls,
+    allowUrls
   });
 
   // Reviews stay grounded in the repository: no edits, no web.
   const run = await executeJob(job, backend, {
     launch,
     cwd: repoRoot,
-    prompt: buildReviewPrompt(kind, context, focus, backend.prompt),
+    prompt: buildReviewPrompt(kind, context, focus, backend.prompt, { pages, allowUrls }),
     finalInstruction: REVIEW_FINAL_INSTRUCTION,
     write: false,
     web: false,
+    allowUrls,
     structured: true,
     model: resolveModel(options),
     timeoutMs: resolveTimeoutMs(options, kind)
@@ -468,22 +488,27 @@ async function handleReview(argv, kind) {
 
   let output;
   let review = null;
+  const refused = refusedTools(run);
+  let possiblyIncomplete = false;
   if (backend.isRunSuccessful(run)) {
     review = parseReview(run.text, run.structured);
-    output = render.renderReview({ label, context, focus, review, answer: run.text, job });
-    finishJob(job, "completed", output, review ? `${review.verdict}: ${shorten(review.summary, 90)}` : shorten(firstLine(run.text), 90));
+    possiblyIncomplete = Boolean(review && review.findings.length === 0 && refused.length);
+    output = render.renderReview({ label, context, focus, review, answer: run.text, job, pages, refused: possiblyIncomplete ? refused : [] });
+    const summary = review ? `${possiblyIncomplete ? "possibly incomplete" : review.verdict}: ${shorten(review.summary, 90)}` : shorten(firstLine(run.text), 90);
+    finishJob(job, "completed", output, summary);
   } else {
     const failure = backend.classifyFailure(run);
     output = render.renderFailure({ title: `Gemini ${label}`, failure, run, job });
     finishJob(job, "failed", output, failure.message);
     process.exitCode = 1;
   }
-  write(options.json ? JSON.stringify({ job, review, answer: run.text }, null, 2) : output);
+  write(options.json ? JSON.stringify({ job, review, refusedTools: refused, possiblyIncomplete, answer: run.text }, null, 2) : output);
 }
 
 async function handleConsult(argv, kind) {
   const { options, positionals } = parseArgs(normalizeArgv(argv), {
     valueOptions: ["model", "cwd", "prompt-file", "timeout-min", "resume-session"],
+    listOptions: ["allow-url"],
     booleanOptions: ["json", "write", "read-only", "resume-last", "resume", "fresh", "background", "wait"],
     aliasMap: { C: "cwd", m: "model" }
   });
@@ -492,6 +517,7 @@ async function handleConsult(argv, kind) {
   }
 
   const backend = getBackend();
+  const allowUrls = resolveAllowUrls(options, backend);
   const cwd = resolveCwd(options);
   const workspaceRoot = workspaceRootFor(cwd);
   const writeMode = kind === "task" && Boolean(options.write) && !options["read-only"];
@@ -505,11 +531,12 @@ async function handleConsult(argv, kind) {
   const runRequest = {
     cwd: workspaceRoot,
     prompt: resumeSessionId
-      ? buildFollowUpPrompt({ request: request || "Continue where you left off.", write: writeMode }, backend.prompt)
-      : buildTaskPrompt({ request, write: writeMode, kind, workspaceRoot }, backend.prompt),
+      ? buildFollowUpPrompt({ request: request || "Continue where you left off.", write: writeMode, allowUrls }, backend.prompt)
+      : buildTaskPrompt({ request, write: writeMode, kind, workspaceRoot, allowUrls }, backend.prompt),
     finalInstruction: resumeSessionId ? FOLLOW_UP_FINAL_INSTRUCTION : kind === "ask" ? ASK_FINAL_INSTRUCTION : TASK_FINAL_INSTRUCTION,
     write: writeMode,
     web: true,
+    allowUrls,
     structured: false,
     model: resolveModel(options),
     resumeSessionId,
@@ -522,7 +549,8 @@ async function handleConsult(argv, kind) {
     workspaceRoot,
     write: writeMode,
     resumedFrom: resumeSessionId,
-    backend: backend.name
+    backend: backend.name,
+    allowUrls
   };
 
   if (options.background) {

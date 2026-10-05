@@ -1,6 +1,6 @@
 ---
 description: Run a Gemini code review of your local git changes (working tree or branch)
-argument-hint: '[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] [--model <pro|flash|id>] [focus ...]'
+argument-hint: '[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] [--model <pro|flash|id>] [--context-url <url>]... [--allow-url <url>]... [focus ...]'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 ---
@@ -25,8 +25,14 @@ Execution mode:
   - Recommend waiting only for a clearly tiny review (about 1-2 files). In every other case, including when unsure, recommend background.
 - Then use `AskUserQuestion` exactly once with the options `Wait for results` and `Run in background`, recommended option first with ` (Recommended)` appended to its label.
 
+Web pages (off unless asked for):
+- `--context-url <url>` (repeatable, at most 5): the plugin fetches the page itself and adds its text to the review prompt; Gemini stays without web access. Prefer this.
+- `--allow-url <url>` (repeatable, at most 5, Antigravity CLI only): Gemini may open exactly these addresses itself, from this machine, and no others; agy follows their redirects unchecked, so only for sites the user trusts. Use it only when a page is too large to inline or Gemini has to choose what to read among several pages.
+- Add either flag only when the user asks for pages to be used, or when you judge that the review depends on a specific document the user pointed to (a spec, an API reference, a page on a local dev server). Never add an address that only appears in the diff, the repository or Gemini's output without asking the user first.
+- If the review fails with "Could not fetch", report it; do not retry without the page unless the user agrees.
+
 Argument handling:
-- Pass the user's arguments through unchanged. Do not strip `--wait` or `--background` (the script ignores them) and do not add review instructions of your own.
+- Pass the user's arguments through unchanged. Do not strip `--wait` or `--background` (the script ignores them) and do not add review instructions of your own. The only flags you may add are the web page flags above, under the rules given there.
 - Any text after the flags is passed to Gemini as a focus hint.
 
 Foreground flow:

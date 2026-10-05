@@ -59,7 +59,11 @@ const WEB_TOOLS = ["search_web", "read_url_content"];
 const TOUCH_TOOLS = new Set([...EDIT_TOOLS, "sed_file", "notebook_edit"]);
 const GUARD_SOURCE = fileURLToPath(new URL("../agy-guard.mjs", import.meta.url));
 const GUARD_FILE = "gemini-cc-guard.mjs";
-const PROFILE_PERMISSIONS = { deny: ["command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)"] };
+// Headless agy refuses, and ends the run on, any page read and any file read
+// outside the workspace, including the copy of a fetched page that it keeps
+// in the profile. The guard hook runs first and decides both (exact
+// addresses; the repository and the profile), so agy's own checks are lifted.
+const PROFILE_PERMISSIONS = { allow: ["read_url(*)", "read_file(*)"], deny: ["command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)"] };
 // agy starts hook commands through cmd /c or sh -c from the folder that holds
 // hooks.json, and on Windows it mangles quoted arguments, so the guard sits in
 // that folder and is started by its bare name.
@@ -82,7 +86,8 @@ const AGENT_DEFINITION = [
   "- Explore the repository with view_file, list_dir, grep_search and find_by_name before making claims about it.",
   "- Each request states whether this turn may edit files. When it says read-only, do not call the file-editing tools: describe the change instead (file, location, replacement code). When edits are allowed, keep them inside the repository, never inside .git, and scoped to the request.",
   "- There is no shell: you cannot run commands, builds or tests. Name the commands Claude should run instead.",
-  "- Web tools are switched off for some runs. When they are, work from the repository alone.",
+  "- Web search is switched off for some runs, and you may open only the web addresses a request lists. Otherwise work from the repository.",
+  "- When a tool call is refused, carry on without it. Never stop the request to report the refusal or to ask for more permissions: they cannot be granted from inside a run.",
   "- Cite files as repository-relative path:line in plain text, not as links.",
   "- Follow the output format the request asks for.",
   ""
@@ -201,13 +206,14 @@ function withEnv(base, updates) {
 
 // agy's environment: the private profile as its home folder, this run's
 // permissions for the guard, and this Node on PATH for the guard hook.
-export function agyEnv({ write = false, web = false, profile = agyProfileDir() } = {}, extra = {}) {
+export function agyEnv({ write = false, web = false, allowUrls = [], profile = agyProfileDir() } = {}, extra = {}) {
   return withEnv(process.env, {
     USERPROFILE: profile,
     HOME: profile,
     GEMINI_CC_PROFILE: profile,
     GEMINI_CC_MODE: write ? "write" : "read-only",
     GEMINI_CC_WEB: web ? "1" : "0",
+    GEMINI_CC_WEB_ALLOW: JSON.stringify(allowUrls ?? []),
     PATH: [path.dirname(process.execPath), process.env.PATH].filter(Boolean).join(path.delimiter),
     NO_COLOR: "1",
     ...extra
@@ -328,7 +334,7 @@ export function runAgy(options) {
     const log = (line) => options.onLog?.(line);
     const child = spawn(launch.command, [...launch.prefixArgs, ...cliArgs], {
       cwd: options.cwd,
-      env: agyEnv({ write: options.write, web: options.web, profile }, options.env),
+      env: agyEnv({ write: options.write, web: options.web, allowUrls: options.allowUrls, profile }, options.env),
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       detached: process.platform !== "win32"

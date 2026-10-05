@@ -82,6 +82,20 @@ export function normalizeReview(value) {
   };
 }
 
+// How each backend reports a tool call that it refused, as opposed to one that
+// failed: agy's guard hook or permission check, the Gemini CLI's policy engine.
+const REFUSAL = /denied by pre-tool hook|permission check failed|Tool execution denied by policy/i;
+
+// Tools whose calls the run refused. A review that comes back empty after one
+// may have stopped to report the refusal instead of reviewing.
+export function refusedTools(run) {
+  const names = (run?.toolCalls ?? [])
+    .filter((call) => call.status === "error" && REFUSAL.test(String(call.error ?? "")))
+    .map((call) => call.name)
+    .filter(Boolean);
+  return [...new Set(names)];
+}
+
 // agy returns schema-checked output separately; the Gemini CLI only has the text.
 export function parseReview(answer, structured = null) {
   const value = structured && typeof structured === "object" && !Array.isArray(structured) ? structured : extractJsonObject(answer);

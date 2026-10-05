@@ -71,12 +71,18 @@ function formatLocation(finding) {
   return `\`${finding.file}:${range}\``;
 }
 
-export function renderReview({ label, context, focus, review, answer, job }) {
+export function renderReview({ label, context, focus, review, answer, job, pages = [], refused = [] }) {
   const show = unescaper(job);
   const lines = [`# Gemini ${label}`, ""];
   const meta = [`**Target:** ${context.target.label} (${context.summary})`];
   if (focus) {
     meta.push(`**Focus:** ${focus}`);
+  }
+  if (pages.length) {
+    meta.push(`**Reference pages:** ${pages.map((page) => `${page.url}${page.truncated ? " (cut to fit)" : ""}`).join(", ")}`);
+  }
+  if (job?.allowUrls?.length) {
+    meta.push(`**Gemini may open:** ${job.allowUrls.join(", ")}`);
   }
   if (review) {
     meta.push(`**Verdict:** ${review.verdict === "approve" ? "approve" : "needs attention"}`);
@@ -92,7 +98,12 @@ export function renderReview({ label, context, focus, review, answer, job }) {
     if (review.summary) {
       lines.push(show(review.summary), "");
     }
-    if (review.findings.length === 0) {
+    if (review.findings.length === 0 && refused.length) {
+      lines.push(
+        `> **Possibly incomplete:** Gemini returned no findings after the run refused some of its tool calls (${refused.map((name) => `\`${name}\``).join(", ")}). It may have stopped to report the restriction instead of reviewing the change. Read the summary above before relying on this result, and rerun the review if it did not cover the change.`,
+        ""
+      );
+    } else if (review.findings.length === 0) {
       lines.push("No material findings.", "");
     } else {
       lines.push("## Findings", "");

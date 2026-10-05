@@ -6,6 +6,8 @@
 export function parseArgs(argv, config = {}) {
   const valueOptions = new Set(config.valueOptions ?? []);
   const booleanOptions = new Set(config.booleanOptions ?? []);
+  // Options that may repeat; their values are collected in an array.
+  const listOptions = new Set(config.listOptions ?? []);
   const aliasMap = config.aliasMap ?? {};
   const options = {};
   const positionals = [];
@@ -33,12 +35,16 @@ export function parseArgs(argv, config = {}) {
       options[key] = inlineValue === undefined ? true : !/^(false|0|no|off)$/i.test(inlineValue);
       continue;
     }
-    if (valueOptions.has(key)) {
+    if (valueOptions.has(key) || listOptions.has(key)) {
       const value = inlineValue ?? argv[index + 1];
       if (value === undefined) {
         throw new Error(`Missing value for ${long ? "--" : "-"}${rawKey}.`);
       }
-      options[key] = value;
+      if (listOptions.has(key)) {
+        options[key] = [...(options[key] ?? []), value];
+      } else {
+        options[key] = value;
+      }
       if (inlineValue === undefined) {
         index += 1;
       }

@@ -167,6 +167,20 @@ test("review runs Gemini read-only and renders sorted findings", () => {
   assert.equal(path.resolve(call.cwd).toLowerCase(), fs.realpathSync.native(repo).toLowerCase());
 });
 
+test("an empty review is flagged after a policy refusal, not after an ordinary tool error", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+
+  const refused = companion(["review"], { cwd: repo, env: makeEnv({ FAKE_GEMINI_MODE: "web-refused" }).env });
+  assert.equal(refused.status, 0, refused.stderr);
+  assert.match(refused.stdout, /Possibly incomplete:.*\(`web_fetch`\)/);
+
+  const failed = companion(["review"], { cwd: repo, env: makeEnv({ FAKE_GEMINI_MODE: "missing-file" }).env });
+  assert.equal(failed.status, 0, failed.stderr);
+  assert.match(failed.stdout, /No material findings/);
+  assert.doesNotMatch(failed.stdout, /Possibly incomplete/);
+});
+
 test("review reports when there is nothing to review", () => {
   const repo = makeRepo();
   const { env } = makeEnv();

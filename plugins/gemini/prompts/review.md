@@ -11,7 +11,7 @@ Review target: {{TARGET_LABEL}} ({{TARGET_SUMMARY}})
 {{REVIEW_INPUT}}
 </repository_context>
 
-<task>
+{{EXTRA_CONTEXT}}<task>
 Review the change in <repository_context> and report the defects that matter.
 User focus: {{USER_FOCUS}}
 </task>
@@ -28,6 +28,7 @@ Skip style, naming and formatting remarks unless they hide a real bug.
 <method>
 - Treat the diff as primary evidence. Before asserting a problem, use your file reading and search tools to check the surrounding code, callers, definitions and tests.
 - You cannot run commands and must not modify files.
+{{WEB_RULE}}
 - Where the diff was cut short for a file, read that file before judging it.
 - Prefer one well-supported finding over several speculative ones. If a conclusion rests on an inference, say so in the finding and lower its confidence.
 </method>

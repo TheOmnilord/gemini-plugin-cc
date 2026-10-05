@@ -2,13 +2,14 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { plainFileLinks, resolveAgyModel } from "../plugins/gemini/scripts/lib/agy.mjs";
-import { argAfter, captures, companion, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
+import { argAfter, captures, companion, companionAsync, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
 
 const FAKE_AGY = path.join(ROOT, "tests", "fixtures", "fake-agy.mjs");
 const FAKE_GEMINI = path.join(ROOT, "tests", "fixtures", "fake-gemini.mjs");
@@ -89,6 +90,40 @@ test("review runs through agy read-only, without web, with the review schema", (
   assert.match(call.message, /\/\/ @param xs numbers/);
   assert.doesNotMatch(call.message, /Transport note|\\@/);
   assert.match(call.message, /perform the review now/);
+  assert.match(call.message, /no web access in this review/);
+  assert.doesNotMatch(result.stdout, /Possibly incomplete/);
+});
+
+test("an empty review after a refused tool call is flagged as possibly incomplete", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// see https://example.com/spec\n");
+  const { env } = makeEnv({ FAKE_AGY_MODE: "web-refused" });
+
+  const result = companion(["adversarial-review"], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Possibly incomplete:.*\(`read_url_content`\)/);
+  assert.doesNotMatch(result.stdout, /No material findings/);
+
+  const json = JSON.parse(companion(["review", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(json.possiblyIncomplete, true);
+  assert.deepEqual(json.refusedTools, ["read_url_content"]);
+  const jobs = JSON.parse(companion(["status", "--all", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(jobs.length, 2);
+  jobs.forEach((job) => assert.match(job.resultSummary, /^possibly incomplete:/));
+});
+
+test("a review that carries on after a refused tool call is shown as usual", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const { env } = makeEnv({ FAKE_AGY_MODE: "web-refused-then-review" });
+
+  const result = companion(["review"], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /### 1\. \[high\] Empty list crashes average\(\)/);
+  assert.doesNotMatch(result.stdout, /Possibly incomplete/);
+  const json = JSON.parse(companion(["review", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(json.possiblyIncomplete, false);
+  assert.deepEqual(json.refusedTools, ["read_url_content"]);
 });
 
 test("ask can continue the same agy conversation, with web access", () => {
@@ -153,7 +188,7 @@ test("the private agy profile carries the agent, the guard and the deny rules", 
 
   const settings = JSON.parse(fs.readFileSync(settingsFile, "utf8"));
   assert.equal(settings.keptByAgy, 1);
-  assert.deepEqual(settings.permissions, { deny: ["command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)"] });
+  assert.deepEqual(settings.permissions, { allow: ["read_url(*)", "read_file(*)"], deny: ["command(*)", "unsandboxed(*)", "execute_url(*)", "mcp(*)"] });
 
   const configDir = path.join(profile, ".gemini", "config");
   const hooks = JSON.parse(fs.readFileSync(path.join(configDir, "hooks.json"), "utf8"));
@@ -267,4 +302,84 @@ test("an unknown backend name is rejected", () => {
   const result = companion(["ask"], { cwd: os.tmpdir(), env, input: "hello" });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Unknown GEMINI_COMPANION_BACKEND "bard"/);
+});
+
+test("--context-url adds fetched pages to the review; Gemini still gets no web access", async () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const { env, capture } = makeEnv();
+  const server = http.createServer((request, response) => {
+    if (request.url === "/spec") {
+      response.writeHead(200, { "content-type": "text/html" }).end("<h1>Spec</h1><p>average() of an empty list returns 0.</p>");
+    } else {
+      response.writeHead(404).end();
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const result = await companionAsync(["review", "--context-url", `${base}/spec#empty`], { cwd: repo, env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(result.stdout.includes(`**Reference pages:** ${base}/spec`), result.stdout);
+    const [call] = captures(capture);
+    assert.match(call.message, /<reference_material>[\s\S]*untrusted[\s\S]*<page url="[^"]+\/spec">\n# Spec\naverage\(\) of an empty list returns 0\.\n<\/page>/);
+    assert.match(call.message, /no web access in this review[\s\S]*the diff, the repository and the reference material/);
+    assert.equal(call.env.web, "0");
+    assert.equal(call.env.webAllow, "[]");
+
+    // A page that cannot be fetched stops the review before Gemini starts.
+    const missing = await companionAsync(["review", "--context-url", `${base}/gone`], { cwd: repo, env });
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /Could not fetch .*\/gone for the review: HTTP 404/);
+    assert.equal(captures(capture).length, 1);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("--allow-url hands the guard the exact addresses, for reviews and asks", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const { env, capture } = makeEnv();
+
+  const review = companion(["review", "--allow-url", "https://docs.example.com/spec#x", "--allow-url=http://localhost:3000"], { cwd: repo, env });
+  assert.equal(review.status, 0, review.stderr);
+  assert.match(review.stdout, /\*\*Gemini may open:\*\* https:\/\/docs\.example\.com\/spec, http:\/\/localhost:3000\//);
+  const ask = companion(["ask", "--allow-url", "https://docs.example.com/spec"], { cwd: repo, env, input: "What does the spec say?" });
+  assert.equal(ask.status, 0, ask.stderr);
+
+  const [reviewCall, askCall] = captures(capture);
+  assert.deepEqual(JSON.parse(reviewCall.env.webAllow), ["https://docs.example.com/spec", "http://localhost:3000/"]);
+  assert.equal(reviewCall.env.web, "0");
+  assert.match(reviewCall.message, /<web_access>[\s\S]*- https:\/\/docs\.example\.com\/spec\n- http:\/\/localhost:3000\/\nWeb search and every other address are refused/);
+  assert.match(reviewCall.message, /Your only web access in this review is reading the exact addresses/);
+  assert.deepEqual(JSON.parse(askCall.env.webAllow), ["https://docs.example.com/spec"]);
+  assert.equal(askCall.env.web, "1");
+  assert.match(askCall.message, /You may open exactly these web addresses[^\n]*https:\/\/docs\.example\.com\/spec/);
+
+  // Off unless asked for.
+  const plain = companion(["ask"], { cwd: repo, env, input: "hello" });
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(captures(capture).at(-1).env.webAllow, "[]");
+  assert.doesNotMatch(captures(capture).at(-1).message, /You may open exactly/);
+});
+
+test("bad --context-url and --allow-url addresses are rejected before Gemini starts", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const { env, capture } = makeEnv();
+  for (const [args, pattern] of [
+    [["review", "--context-url", "file:///etc/passwd"], /only accepts http and https/],
+    [["review", "--allow-url", "https://user:pw@example.com/"], /user name or password/],
+    [["review", "--context-url"], /Missing value for --context-url/]
+  ]) {
+    const result = companion(args, { cwd: repo, env });
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, pattern);
+  }
+  const cli = companion(["review", "--allow-url", "https://example.com/"], { cwd: repo, env: { ...env, GEMINI_COMPANION_BACKEND: "gemini-cli" } });
+  assert.equal(cli.status, 1);
+  assert.match(cli.stderr, /--allow-url needs the Antigravity CLI backend/);
+  assert.equal(fs.existsSync(capture), false);
 });

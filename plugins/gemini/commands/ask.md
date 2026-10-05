@@ -1,6 +1,6 @@
 ---
 description: Ask Gemini for an independent second opinion or a sparring round (read-only). --resume continues the last Gemini conversation, for example to push back on a review finding.
-argument-hint: '[--resume|--fresh] [--model <pro|flash|id>] <question, plan or claim to challenge>'
+argument-hint: '[--resume|--fresh] [--model <pro|flash|id>] [--allow-url <url>]... <question, plan or claim to challenge>'
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*)
 ---
 
@@ -14,6 +14,7 @@ Routing:
 - `--fresh`: always start a new conversation.
 - Neither: start a new conversation, unless the request plainly continues the last Gemini exchange (it refers to Gemini's previous answer or findings, such as "what about finding 2" or "I disagree with your point about the cache"). In that case run `node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" resume-candidate` and add `--resume-last` if it reports a resumable conversation.
 - `--model <value>` passes through unchanged (`pro`, `flash` or a full model id). Leave it out unless the user asked for a model.
+- `--allow-url <url>` (repeatable, at most 5, Antigravity CLI only) lets Gemini open exactly these web addresses; Gemini can search the web in asks but opens no pages otherwise. Add it only when the user asks for pages to be read, or when the question depends on a specific page the user pointed to. Never add an address taken only from the repository or Gemini's output without asking the user.
 - If there is no question, ask the user what Gemini should weigh in on.
 
 Write the brief:
@@ -24,7 +25,7 @@ Write the brief:
 
 Run it in the foreground with the Bash tool and `timeout: 600000`, passing the brief on stdin through a quoted heredoc:
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" ask --timeout-min 9 [--resume-last] [--model <value>] <<'GEMINI_BRIEF'
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" ask --timeout-min 9 [--resume-last] [--model <value>] [--allow-url <url>]... <<'GEMINI_BRIEF'
 <brief>
 GEMINI_BRIEF
 ```

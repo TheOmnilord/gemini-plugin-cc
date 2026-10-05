@@ -1,6 +1,6 @@
 ---
 description: Delegate an investigation, a fix or a second implementation pass to Gemini through the gemini-rescue subagent
-argument-hint: "[--background|--wait] [--resume|--fresh] [--write|--read-only] [--model <pro|flash|id>] [what Gemini should investigate, solve or continue]"
+argument-hint: "[--background|--wait] [--resume|--fresh] [--write|--read-only] [--model <pro|flash|id>] [--allow-url <url>]... [what Gemini should investigate, solve or continue]"
 allowed-tools: Bash(node:*), AskUserQuestion, Agent
 ---
 
@@ -14,7 +14,7 @@ $ARGUMENTS
 Execution mode:
 - `--background`: run the subagent in the background. `--wait`: run it in the foreground. Neither: foreground.
 - `--background` and `--wait` are Claude-side controls. Do not forward them as part of the task text.
-- `--model`, `--write` and `--read-only` are runtime flags: keep them in the forwarded request, outside the task text.
+- `--model`, `--write`, `--read-only` and `--allow-url` are runtime flags: keep them in the forwarded request, outside the task text.
 - `--resume` or `--fresh`: the user already chose; do not ask.
 - Otherwise, check for a resumable Gemini conversation from this session:
 
