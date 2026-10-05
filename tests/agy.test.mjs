@@ -248,6 +248,18 @@ test("setup explains how to install agy when it is missing", () => {
   assert.match(result.stdout, /The Antigravity CLI \(agy\) was not found/);
 });
 
+test("a run stopped by a cancel is reported as cancelled, not as a failure", () => {
+  const repo = makeRepo();
+  const { env } = makeEnv({ FAKE_AGY_MODE: "cancelled-mid-run" });
+  const result = companion(["task"], { cwd: repo, env, input: "Investigate average()." });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Gemini job `task-[^`]+` was cancelled\./);
+  assert.doesNotMatch(result.stdout, /failed/);
+  const [job] = JSON.parse(companion(["status", "--all", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(job.status, "cancelled");
+  assert.equal(job.resultSummary, "Cancelled by user.");
+});
+
 test("agy failures are classified", () => {
   const repo = makeRepo();
   const cases = [
