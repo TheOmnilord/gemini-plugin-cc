@@ -2,7 +2,7 @@
 // the companion script, and readers for what the fake CLIs record.
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -57,6 +57,20 @@ export function companion(args, { cwd, env, input = "" }) {
     timeout: 60_000
   });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+// Like companion(), but leaves the event loop free, for tests that serve pages.
+export function companionAsync(args, { cwd, env, input = "" }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [COMPANION, ...args], { cwd, env: { ...process.env, ...env } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
+    child.on("error", reject);
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(input);
+  });
 }
 
 export function captures(file) {

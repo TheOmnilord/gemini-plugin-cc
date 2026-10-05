@@ -10,7 +10,7 @@ Teams that use Gemini through a paid Gemini API key, Vertex AI or Gemini Code As
 
 | Command | What it does |
 | --- | --- |
-| `/gemini:review` | Gemini reviews your uncommitted changes, or your branch against its base, and returns findings ordered by severity. Options: `--base <ref>`, `--scope auto\|working-tree\|branch`, `--model`, focus text. |
+| `/gemini:review` | Gemini reviews your uncommitted changes, or your branch against its base, and returns findings ordered by severity. Options: `--base <ref>`, `--scope auto\|working-tree\|branch`, `--model`, [web pages](#web-pages), focus text. |
 | `/gemini:adversarial-review` | A challenge review of the approach, design choices and assumptions, not just the lines. Same options. |
 | `/gemini:ask` | An independent second opinion or sparring round on a question, plan or claim (read-only). `--resume` continues the last Gemini conversation, including a review, so you can push back on a finding. |
 | `/gemini:rescue` | Hands an investigation or fix to Gemini through the `gemini-rescue` subagent. Read-only for diagnosis; `--write` lets Gemini edit files. `--background` for long jobs. |
@@ -52,10 +52,17 @@ Or inside Claude Code: `/plugin marketplace add TheOmnilord/gemini-plugin-cc`, t
 - **Safety.** Headless `agy` would approve file writes anywhere on disk, so the profile adds three layers:
   - The plugin's `gemini-cc` agent offers Gemini file reading and search, file edits and web tools, and no shell, browser or MCP tools.
   - The profile's settings deny shell commands, browser actions and MCP tools outright.
-  - A guard hook ([`agy-guard.mjs`](plugins/gemini/scripts/agy-guard.mjs)) checks every tool call before it runs. Reads must stay inside the repository. Edits are allowed only in `--write` runs, only inside the repository and never inside `.git`. Web search and fetch are off for reviews and on for asks and tasks. Anything else is denied.
+  - A guard hook ([`agy-guard.mjs`](plugins/gemini/scripts/agy-guard.mjs)) checks every tool call before it runs. Reads must stay inside the repository. Edits are allowed only in `--write` runs, only inside the repository and never inside `.git`. Web search is off for reviews and on for asks and tasks. Web pages open only at the exact addresses a run lists with `--allow-url`. Anything else is denied.
+  - Because the guard decides those, the profile lifts `agy`'s own checks on page reads and on file reads outside the repository. Headless `agy` would otherwise refuse them and end the run, including when Gemini reads its own copy of a page it fetched. Outside the repository, the guard opens only the current conversation's folder in the profile, where `agy` keeps its notes and those copies; other conversations' transcripts stay closed. Symlinks and junctions are followed to where they really lead before a read or an edit is allowed. The guard sees only where a search starts; `agy` 1.2.17's own searches do not follow links (checked with a junction out of the repository).
 - **Resume.** `--resume` continues the previous conversation with `agy --conversation <id>`. Each turn restates whether it may edit files, so a review can be followed by `/gemini:rescue --resume --write apply the top fix`.
 - Job records and logs are stored per repository in Claude Code's plugin data folder (`~/.claude/plugins/data/gemini-gemini-cc/`), next to the `agy` profile.
 
+### Web pages
+
+Reviews run without web access, so Gemini judges a change from the diff and the repository. When a review should be checked against a page, such as a spec, an API reference or a page on a local dev server, name the page for that one run. Neither option is ever on by default: you ask for it, or Claude adds it when the review depends on a document you pointed to. Claude does not add addresses that only appear in the diff, the repository or Gemini's answers without asking you.
+
+- `--context-url <url>` (reviews, up to 5): the companion fetches the page from your machine before the review starts and adds its text to the prompt, marked as untrusted. Gemini still has no web access, so nothing in the diff or the page can make it send data anywhere. Only http and https addresses are accepted, without a user name or password in them. Redirects are followed only on the same site, HTML is reduced to text and each page is capped at 200 KB. If a page cannot be fetched, the review stops instead of running without it.
+- `--allow-url <url>` (reviews, asks and tasks, up to 5, Antigravity CLI only): Gemini may open exactly these addresses with its own URL tool, and the guard refuses every other address, including the same page with extra query parameters. `agy` fetches from your machine, so local addresses work. Use it when a page is too large to inline or Gemini should choose among several pages. `agy` follows a listed page's redirects without asking the guard, so list only sites you trust: an open redirect on a listed site could lead to another site, a local service or a cloud metadata address. Prefer `--context-url` when in doubt. The Gemini CLI cannot hold Gemini to exact addresses, so it rejects this flag.
 `agy` also loads customizations from a repository's own `.agents/` folder (rules, skills, hooks and MCP servers), and unlike the Gemini CLI its headless runs do not ask whether you trust the folder. Use the plugin on repositories you trust.
 
 ## Models
@@ -108,7 +115,7 @@ How it differs:
 | `GEMINI_COMPANION_CLI` | Path to a specific Gemini CLI entry script or executable. |
 | `GEMINI_COMPANION_DATA` | Folder for job records, logs and the plugin's `agy` profile. |
 
-Per-run flags: `--model <m>`, `--timeout-min <n>`, and for reviews `--max-diff-kb <n>`.
+Per-run flags: `--model <m>`, `--timeout-min <n>`, `--allow-url <url>`, and for reviews `--max-diff-kb <n>` and `--context-url <url>`.
 
 ## Development
 

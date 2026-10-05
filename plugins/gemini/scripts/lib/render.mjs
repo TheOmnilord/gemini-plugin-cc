@@ -71,12 +71,18 @@ function formatLocation(finding) {
   return `\`${finding.file}:${range}\``;
 }
 
-export function renderReview({ label, context, focus, review, answer, job, refused = [] }) {
+export function renderReview({ label, context, focus, review, answer, job, pages = [], refused = [] }) {
   const show = unescaper(job);
   const lines = [`# Gemini ${label}`, ""];
   const meta = [`**Target:** ${context.target.label} (${context.summary})`];
   if (focus) {
     meta.push(`**Focus:** ${focus}`);
+  }
+  if (pages.length) {
+    meta.push(`**Reference pages:** ${pages.map((page) => `${page.url}${page.truncated ? " (cut to fit)" : ""}`).join(", ")}`);
+  }
+  if (job?.allowUrls?.length) {
+    meta.push(`**Gemini may open:** ${job.allowUrls.join(", ")}`);
   }
   if (review) {
     meta.push(`**Verdict:** ${review.verdict === "approve" ? "approve" : "needs attention"}`);

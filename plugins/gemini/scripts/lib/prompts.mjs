@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { escapeAtSigns } from "./gemini.mjs";
+import { allowUrlRule, referenceBlock, reviewWebRule, webAccessBlock } from "./reference.mjs";
 
 const PROMPTS_DIR = path.resolve(fileURLToPath(new URL("../../prompts", import.meta.url)));
 
@@ -60,7 +61,9 @@ function assemble(templateName, values, { escapeAt = true } = {}) {
   return `${(needsEscape ? escapeAtSigns(withNote) : withNote).trim()}\n`;
 }
 
-export function buildReviewPrompt(kind, context, focus, options = {}) {
+// web: { pages, allowUrls } named for this review with --context-url and --allow-url.
+export function buildReviewPrompt(kind, context, focus, options = {}, web = {}) {
+  const extra = [referenceBlock(web.pages ?? []), webAccessBlock(web.allowUrls ?? [])].filter(Boolean);
   const notes = [];
   if (context.truncatedFiles.length) {
     notes.push(`Note: the diff was cut to fit this prompt for these files; read them directly before judging them: ${context.truncatedFiles.join(", ")}`);
@@ -76,18 +79,24 @@ export function buildReviewPrompt(kind, context, focus, options = {}) {
     CONTEXT_NOTES: notes.join("\n"),
     USER_FOCUS: focus || "No extra focus provided.",
     REVIEW_INPUT: context.content,
+    EXTRA_CONTEXT: extra.map((block) => `${block}\n\n`).join(""),
+    WEB_RULE: reviewWebRule(web),
     OUTPUT_CONTRACT: load("review-output-contract").trim()
   }, options);
 }
 
-export function buildTaskPrompt({ request, write, kind, workspaceRoot }, options = {}) {
+function modeRules(write, allowUrls, options) {
+  return [write ? writeRules(options.lockedBuildFiles ?? true) : READ_ONLY_RULES, allowUrlRule(allowUrls ?? [])].filter(Boolean).join("\n");
+}
+
+export function buildTaskPrompt({ request, write, kind, workspaceRoot, allowUrls }, options = {}) {
   return assemble(
     "task",
     {
       WORKSPACE: workspaceRoot,
       REQUEST_KIND: kind === "ask" ? "asked for your opinion on the request below" : "delegated the request below to you",
       REQUEST: request,
-      MODE_RULES: write ? writeRules(options.lockedBuildFiles ?? true) : READ_ONLY_RULES,
+      MODE_RULES: modeRules(write, allowUrls, options),
       WRITE_OUTPUT_NOTE: write ? ', and a "Files changed" list with one line per file describing the change' : ""
     },
     options
@@ -96,10 +105,10 @@ export function buildTaskPrompt({ request, write, kind, workspaceRoot }, options
 
 // A conversation can switch between read-only and write turns, so every
 // follow-up restates the rules for its own turn.
-export function buildFollowUpPrompt({ request, write }, options = {}) {
+export function buildFollowUpPrompt({ request, write, allowUrls }, options = {}) {
   return assemble(
     "follow-up",
-    { REQUEST: request, MODE_RULES: write ? writeRules(options.lockedBuildFiles ?? true) : READ_ONLY_RULES },
+    { REQUEST: request, MODE_RULES: modeRules(write, allowUrls, options) },
     options
   );
 }

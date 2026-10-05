@@ -27,7 +27,8 @@ GEMINI_TASK
 - Long or open-ended work (a large implementation, or a broad investigation likely to take more than about 8 minutes): add `--background` and leave out `--timeout-min 9`. The companion then starts a detached job and prints its ID straight away.
 - `--resume` means add `--resume-last`. `--fresh` means do not. With neither, add `--resume-last` only when the request clearly continues earlier Gemini work ("continue", "keep going", "apply the top fix", "dig deeper").
 - `--model <value>`: pass it through unchanged. Otherwise leave the model unset.
-- Remove routing flags (`--background`, `--wait`, `--resume`, `--fresh`, `--write`, `--read-only`, `--model <value>`) from the task text; keep the rest of the user's words.
+- `--allow-url <url>` (repeatable): pass it through unchanged. Never add it yourself: Gemini opens no web pages unless the request names them this way.
+- Remove routing flags (`--background`, `--wait`, `--resume`, `--fresh`, `--write`, `--read-only`, `--model <value>`, `--allow-url <url>`) from the task text; keep the rest of the user's words.
 - You may use the `gemini-prompting` skill to tighten the request into a better Gemini prompt. That is the only Claude-side work allowed: do not inspect the repository, read files, grep, solve the problem yourself, poll status, fetch results or cancel jobs.
 - Return the companion's stdout exactly as-is. If the Bash call fails or Gemini cannot be invoked, return nothing.
 

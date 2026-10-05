@@ -19,10 +19,11 @@ GEMINI_TASK
 The companion reaches Gemini through the Antigravity CLI (`agy`) by default, or through the Gemini CLI when the user opted in; the flags are the same.
 
 Flags that `task` understands:
-- (default) read-only: Gemini can read and search the repository and the web, but cannot edit files or run commands.
+- (default) read-only: Gemini can read and search the repository and search the web, but cannot edit files, run commands or open web pages.
 - `--write`: Gemini may create and edit files inside the repository (never inside `.git`; with the Gemini CLI, build files such as package.json also stay read-only). Shell commands stay disabled, so it cannot run builds or tests.
 - `--resume-last`: continue the most recent Gemini conversation in this repository (this Claude session's first), including a read-only one in write mode. Send only the new instruction.
 - `--model <pro|flash|flash-lite|auto|model-id>`.
+- `--allow-url <url>` (repeatable, at most 5, Antigravity CLI only): Gemini may open exactly these web addresses. Only when the request names them.
 - `--background`: start a detached job and print its ID; the user follows up with `/gemini:status` and `/gemini:result`.
 - `--timeout-min <n>`: stop Gemini after n minutes. Use 9 for foreground calls, because the Bash tool gives up at 10.
 

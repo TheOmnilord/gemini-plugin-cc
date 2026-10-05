@@ -56,6 +56,7 @@ process.stdin.on("end", async () => {
       userProfile: process.env.USERPROFILE ?? null,
       mode: process.env.GEMINI_CC_MODE ?? null,
       web: process.env.GEMINI_CC_WEB ?? null,
+      webAllow: process.env.GEMINI_CC_WEB_ALLOW ?? null,
       profile: process.env.GEMINI_CC_PROFILE ?? null,
       noColor: process.env.NO_COLOR ?? null
     };
