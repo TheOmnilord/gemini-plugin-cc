@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import process from "node:process";
 
 import { runCommand } from "./proc.mjs";
 
@@ -225,13 +226,35 @@ function packDiffSections(sections, budget) {
   };
 }
 
+// True when a path really lies inside the repository. git lists the files
+// inside an untracked link to a folder (a junction on Windows) as untracked
+// files, and reading an untracked link to a file reads its target, so both
+// are checked by where they really lead: nothing from outside the repository
+// goes into the prompt.
+function realPathInside(file, realRoot) {
+  let real;
+  try {
+    real = fs.realpathSync.native(file);
+  } catch {
+    return false;
+  }
+  const fold = (name) => (process.platform === "win32" ? name.toLowerCase() : name);
+  const relative = path.relative(fold(realRoot), fold(real));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
 function formatUntracked(repoRoot, files, budget) {
   const blocks = [];
   const skipped = [];
   let used = 0;
+  const realRoot = fs.realpathSync.native(repoRoot);
 
   for (const relative of files) {
     const absolute = path.join(repoRoot, relative);
+    if (!realPathInside(absolute, realRoot)) {
+      blocks.push(`### ${relative}\n(new file behind a link that leads out of the repository, not shown)`);
+      continue;
+    }
     let stat;
     try {
       stat = fs.statSync(absolute);
@@ -274,15 +297,54 @@ function formatUntracked(repoRoot, files, budget) {
   return { text: blocks.join("\n\n"), skipped, size: used };
 }
 
+// Splits untracked paths into those inside the repository and the untracked
+// links that lead out of it, under which git lists the target's files. Only
+// a link's own name goes into the prompt, never what lies behind it.
+function splitUntracked(repoRoot, files) {
+  const realRoot = fs.realpathSync.native(repoRoot);
+  const inside = [];
+  const links = new Set();
+  const leadsOut = new Map();
+  for (const relative of files) {
+    const parts = relative.split("/");
+    let link = null;
+    for (let index = 1; index <= parts.length && !link; index += 1) {
+      const prefix = parts.slice(0, index).join("/");
+      if (!leadsOut.has(prefix)) {
+        leadsOut.set(prefix, !realPathInside(path.join(repoRoot, prefix), realRoot));
+      }
+      if (leadsOut.get(prefix)) {
+        link = prefix;
+      }
+    }
+    if (link) {
+      links.add(link);
+    } else {
+      inside.push(relative);
+    }
+  }
+  return { inside, links: [...links].sort() };
+}
+
 function collectWorkingTree(repoRoot, budget) {
   const state = getWorkingTreeState(repoRoot);
-  const changedFiles = [...new Set([...state.staged, ...state.unstaged, ...state.untracked])].sort();
+  const { inside: untrackedFiles, links } = splitUntracked(repoRoot, state.untracked);
+  const changedFiles = [...new Set([...state.staged, ...state.unstaged, ...untrackedFiles, ...links])].sort();
   if (changedFiles.length === 0) {
     return { empty: true, changedFiles, summary: "the working tree is clean", content: "", truncatedFiles: [], lockfiles: [] };
   }
 
-  const status = gitChecked(repoRoot, ["status", "--short", "--untracked-files=all"]);
-  const untracked = formatUntracked(repoRoot, state.untracked, Math.min(MAX_UNTRACKED_TOTAL_BYTES, Math.floor(budget / 3)));
+  const behindLink = (file) => links.some((link) => file === link || file.startsWith(`${link}/`) || file.startsWith(`"${link}/`));
+  const status = [
+    ...gitChecked(repoRoot, ["status", "--short", "--untracked-files=all"])
+      .split("\n")
+      .filter((line) => line && !behindLink(line.slice(3))),
+    ...links.map((link) => `?? ${link} (a link that leads out of the repository)`)
+  ].join("\n");
+  const untracked = formatUntracked(repoRoot, untrackedFiles, Math.min(MAX_UNTRACKED_TOTAL_BYTES, Math.floor(budget / 3)));
+  untracked.text = [untracked.text, ...links.map((link) => `### ${link}\n(a link that leads out of the repository, not shown)`)]
+    .filter(Boolean)
+    .join("\n\n");
   const packed = packDiffSections(
     [gitChecked(repoRoot, ["diff", "--cached", ...DIFF_FLAGS]), gitChecked(repoRoot, ["diff", ...DIFF_FLAGS])],
     Math.max(budget - untracked.size, Math.floor(budget / 2))
@@ -291,7 +353,7 @@ function collectWorkingTree(repoRoot, budget) {
   return {
     empty: false,
     changedFiles,
-    summary: `${state.staged.length} staged, ${state.unstaged.length} unstaged, ${state.untracked.length} untracked file(s)`,
+    summary: `${state.staged.length} staged, ${state.unstaged.length} unstaged, ${untrackedFiles.length + links.length} untracked file(s)`,
     content: [
       section("Git status", status),
       section("Staged diff", packed.sections[0]),

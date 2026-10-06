@@ -56,10 +56,11 @@ function makeRepo(name) {
   git("config", "user.name", "live-check");
   git("config", "commit.gpgsign", "false");
   fs.writeFileSync(path.join(repo, "README.md"), "A scratch repository for the plugin's live checks.\n");
-  fs.writeFileSync(path.join(repo, ".gitignore"), "linked\n");
   git("add", ".");
   git("commit", "-qm", "init");
   // A link out of the repository: a junction on Windows, a symlink elsewhere.
+  // It stays untracked and not ignored, so searches meet it as they would in
+  // a real repository (they skip ignored paths), and the review's diff has it.
   fs.symlinkSync(outside, path.join(repo, "linked"), "junction");
   return repo;
 }
@@ -212,11 +213,12 @@ const callsTo = (job, tool, target = null) =>
 // used: the full transcript (every tool call and the raw result Gemini got)
 // and every other file, such as saved pages. null unless each conversation
 // has a readable transcript with a result for every call the guard decided,
-// allowed or refused (agy records exactly one per call).
-const profileBrain = path.join(agyProfileDir(), ".gemini", "antigravity-cli", "brain");
-function transcriptCalls(id) {
+// allowed or refused (agy records exactly one per call). The guard logs the
+// profile it ran in, which differs between copies of the plugin.
+const brainOf = (profile) => path.join(profile || agyProfileDir(), ".gemini", "antigravity-cli", "brain");
+function transcriptCalls(brain, id) {
   const steps = fs
-    .readFileSync(path.join(profileBrain, id, ".system_generated", "logs", "transcript_full.jsonl"), "utf8")
+    .readFileSync(path.join(brain, id, ".system_generated", "logs", "transcript_full.jsonl"), "utf8")
     .split("\n")
     .filter((line) => line.trim())
     .map((line) => JSON.parse(line));
@@ -255,8 +257,9 @@ function storedRecords(job) {
   };
   try {
     for (const id of ids) {
-      const recorded = transcriptCalls(id);
       const decided = job.decisions.filter((entry) => entry.conversation === id);
+      const brain = brainOf(decided[0].profile);
+      const recorded = transcriptCalls(brain, id);
       const complete = [...new Set(decided.map((entry) => entry.tool))].every(
         (tool) => recorded.filter((call) => call.name === tool && call.result).length >= decided.filter((entry) => entry.tool === tool).length
       );
@@ -264,7 +267,7 @@ function storedRecords(job) {
         return null;
       }
       calls.push(...recorded);
-      visit(path.join(profileBrain, id));
+      visit(path.join(brain, id));
     }
   } catch {
     return null;
@@ -354,7 +357,8 @@ function searchContained(name, tool, folderKey, patternKey, pattern) {
   const result = (call) => JSON.stringify(call.result ?? "");
   if (matching.some((call) => [secretText, hiddenName].some((text) => result(call).includes(text)))) {
     record("read", name, "FAIL", "its result showed files behind the link");
-  } else if (matching.some((call) => call.result?.status === "DONE" && !/denied by pre-tool hook|permission/i.test(result(call)))) {
+  } else if (matching.some((call) => call.result?.status === "DONE" && /No results found|Found 0 results/.test(result(call)))) {
+    // Completed with agy's own "nothing found" line, not with an error.
     record("read", name, "PASS");
   } else {
     record("read", name, "SKIP", matching.length ? "the search did not complete" : "Gemini did not run that search");
@@ -402,6 +406,25 @@ record(
 );
 
 finished("review", review);
+// The review's prompt lists the untracked link but nothing behind it.
+record(
+  "review",
+  "the review's diff leaves out files behind a link",
+  review.stored === null
+    ? "SKIP"
+    : [secretText, hiddenName, path.basename(secretFile)].some((text) => review.stored.includes(text))
+      ? "FAIL"
+      : review.stored.includes("a link that leads out of the repository")
+        ? "PASS"
+        : "SKIP",
+  review.stored === null
+    ? "agy's records not found"
+    : [secretText, hiddenName, path.basename(secretFile)].some((text) => review.stored.includes(text))
+      ? "names or content from behind the link reached Gemini"
+      : review.stored.includes("a link that leads out of the repository")
+        ? ""
+        : "the prompt did not mention the link"
+);
 refused("review", "opening a web page is refused in reviews", review, "read_url_content", `${base}/spec`, () =>
   requests.includes("/spec") ? "/spec was requested" : ""
 );

@@ -286,6 +286,7 @@ function logDecision(payload, result) {
     const entry = {
       at: new Date().toISOString(),
       conversation: payload?.conversationId ?? null,
+      profile: process.env.GEMINI_CC_PROFILE ?? null,
       tool: payload?.toolCall?.name ?? null,
       args: short(payload?.toolCall?.args ?? null),
       ...result

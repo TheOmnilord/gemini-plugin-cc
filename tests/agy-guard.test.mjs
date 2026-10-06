@@ -214,6 +214,7 @@ test("the hook logs each decision with its call when asked to", () => {
   assert.equal(write.tool, "write_to_file");
   assert.equal(write.decision, "deny");
   assert.equal(write.conversation, "0123abcd-ef");
+  assert.equal(write.profile, profile);
   assert.equal(write.args.TargetFile, target);
   assert.equal(write.args.CodeContent.length, 500);
   assert.equal(read.decision, "allow");

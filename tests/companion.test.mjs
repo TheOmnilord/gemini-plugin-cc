@@ -129,6 +129,37 @@ test("collects working-tree context with untracked files and lockfiles", () => {
   assert.deepEqual(context.lockfiles, ["package-lock.json"]);
 });
 
+test("untracked links out of the repository are not read into the review", () => {
+  const repo = makeRepo();
+  const outside = tempDir("gemini-cc-outside-");
+  fs.writeFileSync(path.join(outside, "secret.txt"), "OUTSIDE-SECRET\n");
+  // A link to a folder (a junction on Windows), whose files git lists as untracked.
+  fs.symlinkSync(outside, path.join(repo, "linked"), "junction");
+  fs.writeFileSync(path.join(repo, "inside.md"), "INSIDE-TEXT\n");
+  let fileLink = false;
+  try {
+    // Links to files need extra rights on Windows; tested where they can be made.
+    fs.symlinkSync(path.join(outside, "secret.txt"), path.join(repo, "notes.txt"), "file");
+    fs.symlinkSync(path.join(repo, "inside.md"), path.join(repo, "alias.md"), "file");
+    fileLink = true;
+  } catch {
+    // Not permitted here.
+  }
+
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  // Neither the content nor the names of what lies behind a link go in.
+  assert.doesNotMatch(context.content, /OUTSIDE-SECRET|secret\.txt/);
+  assert.match(context.content, /INSIDE-TEXT/);
+  assert.match(context.content, /\?\? linked \(a link that leads out of the repository\)/);
+  assert.match(context.content, /### linked\n\(a link that leads out of the repository, not shown\)/);
+  assert.ok(context.changedFiles.includes("linked"));
+  assert.ok(!context.changedFiles.some((file) => file.startsWith("linked/")));
+  if (fileLink) {
+    assert.match(context.content, /### notes\.txt\n\(a link that leads out of the repository, not shown\)/);
+    assert.match(context.content, /### alias\.md \(new file\)\n```\nINSIDE-TEXT/);
+  }
+});
+
 test("truncates oversized diffs per file", () => {
   const repo = makeRepo();
   fs.writeFileSync(path.join(repo, "big.txt"), `${"line of text\n".repeat(4000)}`);
