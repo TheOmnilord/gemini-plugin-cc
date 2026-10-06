@@ -154,8 +154,15 @@ process.stdin.on("end", async () => {
     "503-recovered": "API error (attempt 1): UNAVAILABLE (code 503): The service is currently unavailable.",
     "503-cut-off": "API error (attempt 3): UNAVAILABLE (code 503): The service is currently unavailable.",
     "auth-then-503": "API error (attempt 1): UNAVAILABLE (code 503): The service is currently unavailable.",
-    "quota-after-answer": "API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Quota exceeded."
+    "quota-after-answer": "API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Quota exceeded.",
+    "503-after-progress": "API error (attempt 3): UNAVAILABLE (code 503): The service is currently unavailable."
   };
+  if (mode === "503-after-progress") {
+    // A finished progress message, then an error that stopped the run.
+    say("I will inspect the implementation next.");
+    emit({ event: "result", result: { conversation_id: conversation, status: "ERROR", error: { message: API_ERRORS[mode] }, response: "", usage } });
+    process.exit(0);
+  }
   if (mode === "503-cut-off") {
     // The answer stopped while it was streaming.
     step({ step_index: index++, state: "ACTIVE", step_type: "agent_response", text_delta: "The fix is to" });

@@ -233,7 +233,46 @@ function packDiffSections(sections, budget) {
 // files, and reading an untracked link to a file reads its target, so both
 // are checked by where they really lead: nothing from outside the repository
 // goes into the prompt.
+// True when a path is, or leads through a link to, a Windows network path
+// (\\server\share). Resolving one makes Windows contact that server, so links
+// are read, not followed, until it is clear none leads there.
+function leadsToNetwork(file, depth = 0) {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  const value = String(file).replace(/\//g, "\\");
+  if ((value.startsWith("\\\\") && !/^\\\\[?.]\\[a-z]:(\\|$)/i.test(value)) || depth > 16) {
+    return true;
+  }
+  const resolved = path.resolve(file);
+  const root = path.parse(resolved).root;
+  const parts = resolved.slice(root.length).split(path.sep).filter(Boolean);
+  let current = root;
+  for (let index = 0; index < parts.length; index += 1) {
+    current = path.join(current, parts[index]);
+    let stat;
+    try {
+      stat = fs.lstatSync(current);
+    } catch {
+      return false;
+    }
+    if (stat.isSymbolicLink()) {
+      let target;
+      try {
+        target = fs.readlinkSync(current);
+      } catch {
+        return true;
+      }
+      return leadsToNetwork(path.resolve(path.dirname(current), target, ...parts.slice(index + 1)), depth + 1);
+    }
+  }
+  return false;
+}
+
 function realPathInside(file, realRoot) {
+  if (leadsToNetwork(file)) {
+    return false;
+  }
   let real;
   try {
     real = fs.realpathSync.native(file);

@@ -106,10 +106,64 @@ function namesStream(file) {
   return resolved.slice(path.parse(resolved).root.length).includes(":");
 }
 
-// True when a path is inside any .git, at any depth: a nested repository's
-// hooks would run the next time git is used there. Checked on the path as
-// written and on where it really leads.
-function inGitMetadata(file, roots) {
+// Folders whose files run code the next time a tool works in the repository:
+// git's hooks, and the agent settings that agy (.agents) and the Gemini CLI
+// (.gemini) load from a repository, which can hold hooks and MCP servers.
+const PROTECTED_FOLDERS = new Set([".git", ".agents", ".gemini"]);
+
+// A Windows network path (\\server\share\...), or a device path that is not
+// a drive. Resolving one makes Windows contact that server, which could leak
+// the user's credentials or data in the name, so it is refused unresolved.
+function isNetworkPath(file) {
+  if (!IS_WINDOWS) {
+    return false;
+  }
+  const value = String(file).replace(/\//g, "\\");
+  return value.startsWith("\\\\") && !/^\\\\[?.]\\[a-z]:(\\|$)/i.test(value);
+}
+
+// True when a path is, or leads through a link to, a network path. Each part
+// is checked with lstat, which does not follow links, and a link's target is
+// read rather than resolved, so nothing remote is touched.
+function leadsToNetwork(file, depth = 0) {
+  if (!IS_WINDOWS) {
+    return false;
+  }
+  if (isNetworkPath(file)) {
+    return true;
+  }
+  if (depth > 16) {
+    return true;
+  }
+  const resolved = path.resolve(file);
+  const root = path.parse(resolved).root;
+  const parts = resolved.slice(root.length).split(path.sep).filter(Boolean);
+  let current = root;
+  for (let index = 0; index < parts.length; index += 1) {
+    current = path.join(current, parts[index]);
+    let stat;
+    try {
+      stat = fs.lstatSync(current);
+    } catch {
+      return false;
+    }
+    if (stat.isSymbolicLink()) {
+      let target;
+      try {
+        target = fs.readlinkSync(current);
+      } catch {
+        return true;
+      }
+      return leadsToNetwork(path.resolve(path.dirname(current), target, ...parts.slice(index + 1)), depth + 1);
+    }
+  }
+  return false;
+}
+
+// True when a path is inside any protected folder, at any depth: a nested
+// repository's hooks would run the next time git is used there. Checked on
+// the path as written and on where it really leads.
+function inProtectedFolder(file, roots) {
   const real = realLocation(file);
   return roots.some((root) => {
     const realRoot = realLocation(root);
@@ -124,9 +178,36 @@ function inGitMetadata(file, roots) {
         path
           .relative(comparable(base), comparable(target))
           .split(path.sep)
-          .some((part) => segmentName(part) === ".git")
+          .some((part) => PROTECTED_FOLDERS.has(segmentName(part)))
     );
   });
+}
+
+// The protected folders in the repository root and in every folder on the
+// way to a path, as written and as it really leads. One that is a link
+// (.agents -> config, vendor/.git -> vendor/metadata) must not be edited
+// through its target either, so callers check where these really lead. One
+// that leads to a network path is left out unresolved: the path itself was
+// already checked, and resolving it would contact that server.
+function protectedPlaces(file, roots) {
+  const places = new Set();
+  for (const root of roots) {
+    for (const [target, base] of [
+      [path.resolve(file), path.resolve(root)],
+      [realLocation(file), realLocation(root)]
+    ]) {
+      if (!target || !base || !isInside(target, base)) {
+        continue;
+      }
+      let dir = comparable(base);
+      const folders = path.relative(comparable(base), comparable(target)).split(path.sep).filter(Boolean).slice(0, -1);
+      for (const folder of ["", ...folders]) {
+        dir = folder ? path.join(dir, folder) : dir;
+        PROTECTED_FOLDERS.forEach((name) => places.add(path.join(dir, name)));
+      }
+    }
+  }
+  return [...places].filter((place) => isEntry(place) && !leadsToNetwork(place));
 }
 
 // Path-like arguments (TargetFile, AbsolutePath, SearchDirectory, ...), resolved
@@ -219,12 +300,20 @@ export function decide(payload, env = process.env) {
     if (!targets.length) {
       return deny(`${tool} did not name a path, so the read cannot be checked. Name the file or folder in the repository.`);
     }
+    const remote = targets.find((file) => leadsToNetwork(file));
+    if (remote) {
+      return deny(`${tool} may not use network paths. Not allowed: ${remote}`);
+    }
     const outside = targets.find((file) => !insideAny(file, [...workspaces, notesDir]));
     return outside ? deny(`${tool} may only read inside the repository. Not allowed: ${outside}`) : allow();
   }
 
   if (WRITE_TOOLS.has(tool)) {
     const targets = pathArguments(args, baseDir);
+    const remote = targets.find((file) => leadsToNetwork(file));
+    if (remote) {
+      return deny(`${tool} may not use network paths. Not allowed: ${remote}`);
+    }
     if (targets.length && targets.every((file) => insideAny(file, [notesDir]))) {
       return allow();
     }
@@ -234,8 +323,11 @@ export function decide(payload, env = process.env) {
     if (!targets.length) {
       return deny(`${tool} did not name its target file, so the edit cannot be checked.`);
     }
-    const outside = targets.find((file) => !insideAny(file, workspaces) || inGitMetadata(file, workspaces) || namesStream(file));
-    return outside ? deny(`Edits must stay inside the repository and outside .git. Not allowed: ${outside}`) : allow();
+    const outside = targets.find(
+      (file) =>
+        !insideAny(file, workspaces) || inProtectedFolder(file, workspaces) || insideAny(file, protectedPlaces(file, workspaces)) || namesStream(file)
+    );
+    return outside ? deny(`Edits must stay inside the repository and outside .git, .agents and .gemini. Not allowed: ${outside}`) : allow();
   }
 
   // Opening a URL is allowed only for the exact addresses the user or Claude

@@ -33,14 +33,13 @@ export class GeminiUnavailableError extends Error {
   }
 }
 
-// Every run blocks shell commands, read-only runs also block edits, and runs
-// without web access block web tools. Passing --policy makes the Gemini CLI
-// skip the user's own policy folder, so that folder is passed along too.
+// Every run blocks shell commands, read-only runs also block edits, write
+// runs keep edits out of folders whose files run code, and runs without web
+// access block web tools. Passing --policy makes the Gemini CLI skip the
+// user's own policy folder, so that folder is passed along too.
 export function geminiPolicyFiles({ write = false, web = true } = {}) {
   const files = [path.join(POLICIES_DIR, "no-shell.toml")];
-  if (!write) {
-    files.push(path.join(POLICIES_DIR, "no-edits.toml"));
-  }
+  files.push(path.join(POLICIES_DIR, write ? "protected-folders.toml" : "no-edits.toml"));
   if (!web) {
     files.push(path.join(POLICIES_DIR, "review.toml"));
   }

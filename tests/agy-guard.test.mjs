@@ -83,8 +83,87 @@ test("edits stay out of every .git, also in nested repositories", () => {
     assert.equal(decision("write_to_file", { TargetFile: extended }, { GEMINI_CC_MODE: "write" }), "allow");
   }
   // Names that only look alike are fine.
-  for (const file of [".github/workflows/ci.yml", "docs/my.git.md", ".gitignore", "src/.gitkeep"]) {
+  for (const file of [".github/workflows/ci.yml", "docs/my.git.md", ".gitignore", "src/.gitkeep", "docs/agents.md", "AGENTS.md", "src/gemini.js"]) {
     assert.equal(write(file), "allow", file);
+  }
+});
+
+test("edits stay out of the agent settings that agy and the Gemini CLI load", () => {
+  const write = (file) => decide(call("write_to_file", { TargetFile: path.join(workspace, ...file.split("/")) }), env({ GEMINI_CC_MODE: "write" }));
+  // Hooks or MCP servers planted there would run on the next run in this repository.
+  for (const file of [".agents/hooks.json", ".agents/mcp.json", "packages/app/.agents/rules.json", ".gemini/settings.json", "sub/.Gemini/settings.json"]) {
+    const result = write(file);
+    assert.equal(result.decision, "deny", file);
+    assert.match(result.reason, /outside \.git, \.agents and \.gemini/);
+  }
+});
+
+test("a protected folder that is a link is not edited through its target", () => {
+  const repo = tempDir("guard-protected-link-");
+  fs.mkdirSync(path.join(repo, "config"));
+  fs.mkdirSync(path.join(repo, "src"));
+  // agy loads .agents, which here leads to config/.
+  fs.symlinkSync(path.join(repo, "config"), path.join(repo, ".agents"), "junction");
+  const write = (file) =>
+    decide(
+      { conversationId: conversation, toolCall: { name: "write_to_file", args: { TargetFile: path.join(repo, ...file.split("/")) } }, workspacePaths: [repo] },
+      env({ GEMINI_CC_MODE: "write" })
+    ).decision;
+  assert.equal(write("config/hooks.json"), "deny");
+  assert.equal(write(".agents/hooks.json"), "deny");
+  assert.equal(write("src/app.js"), "allow");
+
+  // A nested repository whose .git leads to a folder beside it.
+  fs.mkdirSync(path.join(repo, "vendor", "metadata", "hooks"), { recursive: true });
+  fs.symlinkSync(path.join(repo, "vendor", "metadata"), path.join(repo, "vendor", ".git"), "junction");
+  assert.equal(write("vendor/metadata/hooks/pre-commit"), "deny");
+  assert.equal(write("vendor/lib.js"), "allow");
+});
+
+test("a protected folder that leads to a network share is not resolved", { skip: process.platform !== "win32" }, () => {
+  const repo = tempDir("guard-protected-unc-");
+  fs.mkdirSync(path.join(repo, "src"));
+  try {
+    fs.symlinkSync("\\\\live-check.invalid\\share", path.join(repo, ".gemini"), "dir");
+  } catch {
+    return; // Creating symlinks needs extra rights on some Windows setups.
+  }
+  const started = Date.now();
+  const result = decide(
+    { conversationId: conversation, toolCall: { name: "write_to_file", args: { TargetFile: path.join(repo, "src", "app.js") } }, workspacePaths: [repo] },
+    env({ GEMINI_CC_MODE: "write" })
+  );
+  assert.equal(result.decision, "allow");
+  assert.ok(Date.now() - started < 3000);
+});
+
+test("network paths are refused before the file system is touched", { skip: process.platform !== "win32" }, () => {
+  // Resolving \\server\share would make Windows contact that server.
+  for (const file of ["\\\\attacker.example\\share\\x.txt", "//attacker.example/share/x.txt", "\\\\?\\UNC\\attacker.example\\share\\x", "\\\\.\\pipe\\x"]) {
+    const read = decide(call("view_file", { AbsolutePath: file }), env());
+    assert.equal(read.decision, "deny", file);
+    assert.match(read.reason, /network paths/, file);
+    assert.equal(decision("write_to_file", { TargetFile: file }, { GEMINI_CC_MODE: "write" }), "deny", file);
+  }
+  // A local path in extended form is still an ordinary path.
+  assert.doesNotMatch(decide(call("view_file", { AbsolutePath: `\\\\?\\${path.join(workspace, "a.js")}` }), env()).reason ?? "", /network/);
+
+  // A link in the repository whose target is a network share is refused without being resolved.
+  const root = tempDir("guard-unc-");
+  const repo = path.join(root, "repo");
+  fs.mkdirSync(repo);
+  let linked = false;
+  try {
+    fs.symlinkSync("\\\\attacker.example\\share", path.join(repo, "share"), "dir");
+    linked = true;
+  } catch {
+    // Creating symlinks needs extra rights on some Windows setups.
+  }
+  if (linked) {
+    const payload = { conversationId: conversation, toolCall: { name: "view_file", args: { AbsolutePath: path.join(repo, "share", "x.txt") } }, workspacePaths: [repo] };
+    const result = decide(payload, env());
+    assert.equal(result.decision, "deny");
+    assert.match(result.reason, /network paths/);
   }
 });
 
