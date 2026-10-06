@@ -138,6 +138,30 @@ process.stdin.on("end", async () => {
   say("Let me look at the code first.");
   tool("view_file", { AbsolutePath: path.join(process.cwd(), "app.js") });
 
+  // agy ends a run with status ERROR and the API error it last met, also when
+  // it retried that error and went on to finish.
+  const API_ERRORS = {
+    "503-midway": "API error (attempt 3): UNAVAILABLE (code 503): The service is currently unavailable.",
+    "503-recovered": "API error (attempt 1): UNAVAILABLE (code 503): The service is currently unavailable.",
+    "503-cut-off": "API error (attempt 3): UNAVAILABLE (code 503): The service is currently unavailable.",
+    "auth-then-503": "API error (attempt 1): UNAVAILABLE (code 503): The service is currently unavailable.",
+    "quota-after-answer": "API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Quota exceeded."
+  };
+  if (mode === "503-cut-off") {
+    // The answer stopped while it was streaming.
+    step({ step_index: index++, state: "ACTIVE", step_type: "agent_response", text_delta: "The fix is to" });
+    emit({ event: "result", result: { conversation_id: conversation, status: "ERROR", error: { message: API_ERRORS[mode] }, response: "The fix is to", usage } });
+    process.exit(0);
+  }
+  if (mode === "auth-then-503") {
+    emit({ event: "error", error: { message: "UNAUTHENTICATED: the sign-in has expired." } });
+  }
+  if (mode === "503-midway") {
+    // Gave up after a tool call, before any answer.
+    emit({ event: "result", result: { conversation_id: conversation, status: "ERROR", error: { message: API_ERRORS[mode] }, response: "Let me look at the code first.", usage } });
+    process.exit(0);
+  }
+
   let answer;
   let structured = null;
   if (mode.startsWith("web-refused")) {
@@ -186,7 +210,8 @@ process.stdin.on("end", async () => {
     event: "result",
     result: {
       conversation_id: conversation,
-      status: "SUCCESS",
+      status: API_ERRORS[mode] ? "ERROR" : "SUCCESS",
+      ...(API_ERRORS[mode] ? { error: { message: API_ERRORS[mode] } } : {}),
       response: `Let me look at the code first.\n${answer}`,
       usage,
       ...(structured ? { structured_output: structured } : {})
