@@ -6,14 +6,15 @@
 # in the spellings Windows reads as the same folder: with trailing dots or
 # spaces, as a stream (name:stream), and as an 8.3 short name (NAME~1), so
 # any path part that looks like a short name is refused.
-# argsPattern is matched against the call's arguments as JSON, where a
-# Windows path separator appears as two backslashes. It sees the path as
+# argsPattern is matched against the call's arguments as JSON (with or
+# without spaces), where a Windows path separator appears as two
+# backslashes; a drive-relative path (C:.git) counts too. It sees the path as
 # written: a link into one of these folders is not caught here (agy's guard
 # checks where a path really leads).
 
 [[rule]]
 toolName = ["write_file", "replace"]
-argsPattern = '"file_path":"(?:[^"]*?(?:/|\\\\))?(?:\.(?:[Gg][Ii][Tt]|[Aa][Gg][Ee][Nn][Tt][Ss]|[Gg][Ee][Mm][Ii][Nn][Ii])[. ]*(?::[^"/\\\\]*)?|[^"/\\\\]*~[0-9][^"/\\\\]*)(?:/|\\\\|")'
+argsPattern = '"file_path"\s*:\s*"(?:[^"]*?(?:/|\\\\|:))?(?:\.(?:[Gg][Ii][Tt]|[Aa][Gg][Ee][Nn][Tt][Ss]|[Gg][Ee][Mm][Ii][Nn][Ii])[. ]*(?::[^"/\\\\]*)?|[^"/\\\\]*~[0-9][^"/\\\\]*)(?:/|\\\\|")'
 decision = "deny"
 priority = 999
 denyMessage = "Edits must stay outside .git, .agents and .gemini: files there run code the next time a tool works in this repository."

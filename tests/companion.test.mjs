@@ -353,10 +353,13 @@ test("the Gemini CLI write policy keeps edits out of .git, .agents and .gemini",
     "C:\\repo\\.gemini \\settings.json",
     "C:\\repo\\.git::$INDEX_ALLOCATION\\config",
     "C:\\repo\\AGENTS~1\\hooks.json",
-    "C:\\repo\\GIT~1\\config"
+    "C:\\repo\\GIT~1\\config",
+    "C:.git\\hooks\\pre-commit"
   ]) {
     assert.ok(refused(file), file);
   }
+  // Arguments written as JSON with spaces.
+  assert.ok(pattern.test('{"file_path": "/repo/.agents/hooks.json", "content": "x"}'));
   for (const file of [
     "/repo/src/app.js",
     "/repo/.github/workflows/ci.yml",
