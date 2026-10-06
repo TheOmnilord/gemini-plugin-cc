@@ -312,15 +312,31 @@ function splitByLinks(repoRoot, files, leadsOut = new Map()) {
   const realRoot = fs.realpathSync.native(repoRoot);
   const inside = [];
   const links = new Set();
+  // "missing" (deleted, so nothing to read), "out" (a link that leads out,
+  // or one whose target is gone) or "in".
+  const where = (prefix) => {
+    if (!leadsOut.has(prefix)) {
+      const absolute = path.join(repoRoot, prefix);
+      let exists = true;
+      try {
+        fs.lstatSync(absolute);
+      } catch {
+        exists = false;
+      }
+      leadsOut.set(prefix, !exists ? "missing" : realPathInside(absolute, realRoot) ? "in" : "out");
+    }
+    return leadsOut.get(prefix);
+  };
   for (const relative of files) {
     const parts = relative.split("/");
     let link = null;
     for (let index = 1; index <= parts.length && !link; index += 1) {
       const prefix = parts.slice(0, index).join("/");
-      if (!leadsOut.has(prefix)) {
-        leadsOut.set(prefix, !realPathInside(path.join(repoRoot, prefix), realRoot));
+      const state = where(prefix);
+      if (state === "missing") {
+        break;
       }
-      if (leadsOut.get(prefix)) {
+      if (state === "out") {
         link = prefix;
       }
     }

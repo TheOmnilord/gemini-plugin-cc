@@ -178,6 +178,23 @@ test("tracked files behind a folder replaced by a link are not diffed", () => {
   assert.match(context.content, /- docs: what lies behind this link is not shown/);
 });
 
+test("deleted files are still reviewed", () => {
+  const repo = makeRepo();
+  fs.mkdirSync(path.join(repo, "old"));
+  fs.writeFileSync(path.join(repo, "old", "gone.js"), "export const GONE = 1;\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "old");
+  fs.rmSync(path.join(repo, "app.js"));
+  fs.rmSync(path.join(repo, "old"), { recursive: true });
+
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.match(context.content, / D app\.js/);
+  assert.match(context.content, / D old\/gone\.js/);
+  assert.match(context.content, /-export const GONE = 1;/);
+  assert.doesNotMatch(context.content, /Links out of the repository/);
+  assert.deepEqual(context.changedFiles, ["app.js", "old/gone.js"]);
+});
+
 test("unusual file names are listed exactly", () => {
   const repo = makeRepo();
   const name = process.platform === "win32" ? "notes 'quoted' #1.md" : 'notes\t"quoted"\\1.md';
