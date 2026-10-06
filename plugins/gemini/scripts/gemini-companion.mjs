@@ -11,11 +11,13 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import {
+  AGY_CHECKED_VERSION,
   AGY_INSTALL_COMMAND,
   AGY_INSTALL_SHELL_COMMAND,
   AGY_SIGN_IN_STEP,
   agyProfileDir,
   getAgyVersion,
+  isNewerThanChecked,
   listAgyModels,
   resolveAgyLaunch,
   resolveAgyModel
@@ -333,6 +335,11 @@ function nodeReport() {
   return { version: process.version, supported: Number(process.versions.node.split(".")[0]) >= 20 };
 }
 
+function agyInstallReport(launch) {
+  const version = getAgyVersion(launch);
+  return { installed: true, version, source: launch.source, checkedVersion: AGY_CHECKED_VERSION, newerThanChecked: isNewerThanChecked(version) };
+}
+
 async function agySetupReport(backend, options) {
   const launch = resolveAgyLaunch();
   const requestedModel = resolveModel(options);
@@ -340,7 +347,7 @@ async function agySetupReport(backend, options) {
     backend: backend.name,
     ready: false,
     node: nodeReport(),
-    agy: launch ? { installed: true, version: getAgyVersion(launch), source: launch.source } : { installed: false },
+    agy: launch ? agyInstallReport(launch) : { installed: false },
     signIn: null,
     models: [],
     model: { requested: requestedModel, resolved: resolveAgyModel(requestedModel), available: null },

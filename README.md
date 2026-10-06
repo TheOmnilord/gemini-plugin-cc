@@ -124,7 +124,13 @@ Per-run flags: `--model <m>`, `--timeout-min <n>`, `--allow-url <url>`, and for 
 npm test
 ```
 
-The tests run the companion against a fake `agy` ([`tests/fixtures/fake-agy.mjs`](tests/fixtures/fake-agy.mjs)) and a fake Gemini CLI ([`tests/fixtures/fake-gemini.mjs`](tests/fixtures/fake-gemini.mjs)), so they need no sign-in. To try a working copy without installing it, start Claude Code with `claude --plugin-dir ./plugins/gemini`.
+The tests run the companion against a fake `agy` ([`tests/fixtures/fake-agy.mjs`](tests/fixtures/fake-agy.mjs)) and a fake Gemini CLI ([`tests/fixtures/fake-gemini.mjs`](tests/fixtures/fake-gemini.mjs)), so they need no sign-in. GitHub Actions runs them on Windows, macOS and Linux for every pull request. To try a working copy without installing it, start Claude Code with `claude --plugin-dir ./plugins/gemini`.
+
+```bash
+npm run live-check
+```
+
+The fakes cannot notice when a new `agy` behaves differently, and `agy` updates itself. The live check runs four real Gemini jobs in scratch repositories against your signed-in `agy`. Each job is told to try things the guard must allow or refuse: reads outside the repository and through a link, edits inside and outside it and in `.git`, listed and unlisted web addresses, and a review. The check judges what actually happened from the guard's decisions, the files on disk, a local web server's requests and tokens that must never reach Gemini. It takes a few minutes and prints PASS, FAIL, SKIP (Gemini did not try that step) or INFO for each check. Run it after `agy` updates; `/gemini:setup` notes when `agy` is newer than the last version checked (`AGY_CHECKED_VERSION` in [`agy.mjs`](plugins/gemini/scripts/lib/agy.mjs)). `--companion <path>` checks another copy of the companion, such as the installed one, and `--keep` keeps the scratch folder.
 
 ## License
 

@@ -240,6 +240,26 @@ function lastLine(text) {
   );
 }
 
+// The newest agy whose behavior was checked live (npm run live-check in the
+// plugin's repository). agy updates itself, and 1.3.0 changed how it treats
+// file edits, so setup notes a newer version.
+export const AGY_CHECKED_VERSION = "1.3.0";
+
+function versionParts(version) {
+  const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""));
+  return match ? match.slice(1).map(Number) : null;
+}
+
+export function isNewerThanChecked(version) {
+  const parts = versionParts(version);
+  const checked = versionParts(AGY_CHECKED_VERSION);
+  if (!parts) {
+    return false;
+  }
+  const difference = parts.map((part, index) => part - checked[index]).find((value) => value !== 0) ?? 0;
+  return difference > 0;
+}
+
 export function getAgyVersion(launch) {
   const result = runCommand(launch.command, [...launch.prefixArgs, "--version"], { timeout: 30000 });
   const output = lastLine(result.stdout);

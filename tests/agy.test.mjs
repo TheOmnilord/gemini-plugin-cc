@@ -286,6 +286,19 @@ test("setup reports agy, the sign-in and the models, and runs a live check", () 
   const text = companion(["setup"], { cwd: os.tmpdir(), env }).stdout;
   assert.match(text, /\*\*Backend:\*\* Antigravity CLI/);
   assert.match(text, /\*\*Sign-in:\*\* signed in/);
+  assert.equal(report.agy.newerThanChecked, false);
+  assert.doesNotMatch(text, /newer than/);
+});
+
+test("setup notes an agy newer than the last version checked", () => {
+  const check = (version) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv({ FAKE_AGY_VERSION: version }).env }).stdout;
+  assert.match(check("1.3.1"), /\*\*Note:\*\* agy 1\.3\.1 is newer than 1\.3\.0, the last version this plugin was checked against/);
+  assert.match(check("2.0.0"), /agy 2\.0\.0 is newer than/);
+  assert.doesNotMatch(check("1.3.0"), /newer than/);
+  assert.doesNotMatch(check("1.2.17"), /newer than/);
+  // Compared as numbers, not as text.
+  assert.doesNotMatch(check("0.10.0"), /newer than/);
+  assert.match(check("1.10.0"), /agy 1\.10\.0 is newer than/);
 });
 
 test("setup and runs explain a signed-out agy", () => {
