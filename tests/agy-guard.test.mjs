@@ -112,6 +112,29 @@ test("a protected folder that is a link is not edited through its target", () =>
   assert.equal(write("config/hooks.json"), "deny");
   assert.equal(write(".agents/hooks.json"), "deny");
   assert.equal(write("src/app.js"), "allow");
+
+  // A nested repository whose .git leads to a folder beside it.
+  fs.mkdirSync(path.join(repo, "vendor", "metadata", "hooks"), { recursive: true });
+  fs.symlinkSync(path.join(repo, "vendor", "metadata"), path.join(repo, "vendor", ".git"), "junction");
+  assert.equal(write("vendor/metadata/hooks/pre-commit"), "deny");
+  assert.equal(write("vendor/lib.js"), "allow");
+});
+
+test("a protected folder that leads to a network share is not resolved", { skip: process.platform !== "win32" }, () => {
+  const repo = tempDir("guard-protected-unc-");
+  fs.mkdirSync(path.join(repo, "src"));
+  try {
+    fs.symlinkSync("\\\\live-check.invalid\\share", path.join(repo, ".gemini"), "dir");
+  } catch {
+    return; // Creating symlinks needs extra rights on some Windows setups.
+  }
+  const started = Date.now();
+  const result = decide(
+    { conversationId: conversation, toolCall: { name: "write_to_file", args: { TargetFile: path.join(repo, "src", "app.js") } }, workspacePaths: [repo] },
+    env({ GEMINI_CC_MODE: "write" })
+  );
+  assert.equal(result.decision, "allow");
+  assert.ok(Date.now() - started < 3000);
 });
 
 test("network paths are refused before the file system is touched", { skip: process.platform !== "win32" }, () => {

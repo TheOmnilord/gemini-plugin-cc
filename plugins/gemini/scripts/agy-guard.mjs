@@ -183,6 +183,33 @@ function inProtectedFolder(file, roots) {
   });
 }
 
+// The protected folders in the repository root and in every folder on the
+// way to a path, as written and as it really leads. One that is a link
+// (.agents -> config, vendor/.git -> vendor/metadata) must not be edited
+// through its target either, so callers check where these really lead. One
+// that leads to a network path is left out unresolved: the path itself was
+// already checked, and resolving it would contact that server.
+function protectedPlaces(file, roots) {
+  const places = new Set();
+  for (const root of roots) {
+    for (const [target, base] of [
+      [path.resolve(file), path.resolve(root)],
+      [realLocation(file), realLocation(root)]
+    ]) {
+      if (!target || !base || !isInside(target, base)) {
+        continue;
+      }
+      let dir = comparable(base);
+      const folders = path.relative(comparable(base), comparable(target)).split(path.sep).filter(Boolean).slice(0, -1);
+      for (const folder of ["", ...folders]) {
+        dir = folder ? path.join(dir, folder) : dir;
+        PROTECTED_FOLDERS.forEach((name) => places.add(path.join(dir, name)));
+      }
+    }
+  }
+  return [...places].filter((place) => isEntry(place) && !leadsToNetwork(place));
+}
+
 // Path-like arguments (TargetFile, AbsolutePath, SearchDirectory, ...), resolved
 // the way agy resolves them: relative to the workspace, with ~ as the home folder.
 function pathArguments(args, baseDir) {
@@ -296,11 +323,9 @@ export function decide(payload, env = process.env) {
     if (!targets.length) {
       return deny(`${tool} did not name its target file, so the edit cannot be checked.`);
     }
-    // Where the repository's own protected folders really are: one that is a
-    // link (.agents -> config) must not be edited through its target either.
-    const protectedPlaces = workspaces.flatMap((root) => [...PROTECTED_FOLDERS].map((name) => path.join(root, name))).filter(isEntry);
     const outside = targets.find(
-      (file) => !insideAny(file, workspaces) || inProtectedFolder(file, workspaces) || insideAny(file, protectedPlaces) || namesStream(file)
+      (file) =>
+        !insideAny(file, workspaces) || inProtectedFolder(file, workspaces) || insideAny(file, protectedPlaces(file, workspaces)) || namesStream(file)
     );
     return outside ? deny(`Edits must stay inside the repository and outside .git, .agents and .gemini. Not allowed: ${outside}`) : allow();
   }
