@@ -112,6 +112,15 @@ process.stdin.on("end", async () => {
     await new Promise((resolve) => setTimeout(resolve, 120_000));
   }
 
+  if (mode === "ignores-guard") {
+    // A broken agy that skips the guard and does what the prompt asks: writes
+    // every file it names, wherever it is.
+    for (const [, file, content] of message.matchAll(/write_to_file (\S+) with the content (.+)$/gm)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, content);
+    }
+  }
+
   if (mode === "cancelled-mid-run") {
     // A cancel arrives while agy runs, and agy is stopped: file the cancel
     // marker for the running job, then die the way a killed process does.

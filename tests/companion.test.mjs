@@ -129,6 +129,82 @@ test("collects working-tree context with untracked files and lockfiles", () => {
   assert.deepEqual(context.lockfiles, ["package-lock.json"]);
 });
 
+test("untracked links out of the repository are not read into the review", () => {
+  const repo = makeRepo();
+  const outside = tempDir("gemini-cc-outside-");
+  fs.writeFileSync(path.join(outside, "secret.txt"), "OUTSIDE-SECRET\n");
+  // A link to a folder (a junction on Windows), whose files git lists as untracked.
+  fs.symlinkSync(outside, path.join(repo, "linked"), "junction");
+  fs.writeFileSync(path.join(repo, "inside.md"), "INSIDE-TEXT\n");
+  let fileLink = false;
+  try {
+    // Links to files need extra rights on Windows; tested where they can be made.
+    fs.symlinkSync(path.join(outside, "secret.txt"), path.join(repo, "notes.txt"), "file");
+    fs.symlinkSync(path.join(repo, "inside.md"), path.join(repo, "alias.md"), "file");
+    fileLink = true;
+  } catch {
+    // Not permitted here.
+  }
+
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  // Neither the content nor the names of what lies behind a link go in.
+  assert.doesNotMatch(context.content, /OUTSIDE-SECRET|secret\.txt/);
+  assert.match(context.content, /INSIDE-TEXT/);
+  assert.match(context.content, /\?\? linked \(a link that leads out of the repository\)/);
+  assert.match(context.content, /## Links out of the repository\n\n- linked: what lies behind this link is not shown/);
+  assert.ok(context.changedFiles.includes("linked"));
+  assert.ok(!context.changedFiles.some((file) => file.startsWith("linked/")));
+  if (fileLink) {
+    assert.match(context.content, /- notes\.txt: what lies behind this link is not shown/);
+    assert.match(context.content, /### alias\.md \(new file\)\n```\nINSIDE-TEXT/);
+  }
+});
+
+test("tracked files behind a folder replaced by a link are not diffed", () => {
+  const repo = makeRepo();
+  fs.mkdirSync(path.join(repo, "docs"));
+  fs.writeFileSync(path.join(repo, "docs", "app.txt"), "tracked\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "docs");
+  const outside = tempDir("gemini-cc-outside-");
+  fs.writeFileSync(path.join(outside, "app.txt"), "OUTSIDE-SECRET\n");
+  fs.rmSync(path.join(repo, "docs"), { recursive: true });
+  fs.symlinkSync(outside, path.join(repo, "docs"), "junction");
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.doesNotMatch(context.content, /OUTSIDE-SECRET/);
+  assert.match(context.content, /## Unstaged diff[\s\S]*\/\/ changed/);
+  assert.match(context.content, /- docs: what lies behind this link is not shown/);
+});
+
+test("deleted files are still reviewed", () => {
+  const repo = makeRepo();
+  fs.mkdirSync(path.join(repo, "old"));
+  fs.writeFileSync(path.join(repo, "old", "gone.js"), "export const GONE = 1;\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "old");
+  fs.rmSync(path.join(repo, "app.js"));
+  fs.rmSync(path.join(repo, "old"), { recursive: true });
+
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.match(context.content, / D app\.js/);
+  assert.match(context.content, / D old\/gone\.js/);
+  assert.match(context.content, /-export const GONE = 1;/);
+  assert.doesNotMatch(context.content, /Links out of the repository/);
+  assert.deepEqual(context.changedFiles, ["app.js", "old/gone.js"]);
+});
+
+test("unusual file names are listed exactly", () => {
+  const repo = makeRepo();
+  const name = process.platform === "win32" ? "notes 'quoted' #1.md" : 'notes\t"quoted"\\1.md';
+  fs.writeFileSync(path.join(repo, name), "NEW-TEXT\n");
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.ok(context.changedFiles.includes(name), JSON.stringify(context.changedFiles));
+  assert.match(context.content, /NEW-TEXT/);
+  assert.doesNotMatch(context.content, /Links out of the repository/);
+});
+
 test("truncates oversized diffs per file", () => {
   const repo = makeRepo();
   fs.writeFileSync(path.join(repo, "big.txt"), `${"line of text\n".repeat(4000)}`);

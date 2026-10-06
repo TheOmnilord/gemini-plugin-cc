@@ -47,7 +47,7 @@ Or inside Claude Code: `/plugin marketplace add TheOmnilord/gemini-plugin-cc`, t
 ## How it works
 
 - Every command calls [`plugins/gemini/scripts/gemini-companion.mjs`](plugins/gemini/scripts/gemini-companion.mjs), which runs `agy -p "" --input-format stream-json --output-format stream-json` with the prompt on stdin and follows its event stream.
-- **Reviews** collect the git diff (staged, unstaged and untracked files, or the branch against its merge-base), inline it in the prompt, and ask Gemini for a verdict with findings. `agy` enforces the [review schema](plugins/gemini/schemas/review-output.schema.json), and the result is rendered as Markdown. The diff budget defaults to 600 KB. Lockfile diffs are summarized, and oversized files are cut with a note telling Gemini to read them itself.
+- **Reviews** collect the git diff (staged, unstaged and untracked files, or the branch against its merge-base), inline it in the prompt, and ask Gemini for a verdict with findings. `agy` enforces the [review schema](plugins/gemini/schemas/review-output.schema.json), and the result is rendered as Markdown. The diff budget defaults to 600 KB. Lockfile diffs are summarized, and oversized files are cut with a note telling Gemini to read them itself. An untracked link (a symlink or junction) that leads out of the repository is named, but neither its target's files nor their names are put in the prompt.
 - **A private `agy` profile.** Plugin runs use their own `agy` profile in the plugin's data folder, so your own `agy` settings, rules and MCP servers never apply to them, and the plugin's rules never touch yours. The sign-in comes from the system keyring, so signing in to `agy` once covers both.
 - **Safety.** Headless `agy` would approve file writes anywhere on disk, so the profile adds three layers:
   - The plugin's `gemini-cc` agent offers Gemini file reading and search, file edits and web tools, and no shell, browser or MCP tools.
@@ -124,7 +124,13 @@ Per-run flags: `--model <m>`, `--timeout-min <n>`, `--allow-url <url>`, and for 
 npm test
 ```
 
-The tests run the companion against a fake `agy` ([`tests/fixtures/fake-agy.mjs`](tests/fixtures/fake-agy.mjs)) and a fake Gemini CLI ([`tests/fixtures/fake-gemini.mjs`](tests/fixtures/fake-gemini.mjs)), so they need no sign-in. To try a working copy without installing it, start Claude Code with `claude --plugin-dir ./plugins/gemini`.
+The tests run the companion against a fake `agy` ([`tests/fixtures/fake-agy.mjs`](tests/fixtures/fake-agy.mjs)) and a fake Gemini CLI ([`tests/fixtures/fake-gemini.mjs`](tests/fixtures/fake-gemini.mjs)), so they need no sign-in. GitHub Actions runs them on Windows, macOS and Linux for every pull request. To try a working copy without installing it, start Claude Code with `claude --plugin-dir ./plugins/gemini`.
+
+```bash
+npm run live-check
+```
+
+The fakes cannot notice when a new `agy` behaves differently, and `agy` updates itself. The live check runs four real Gemini jobs in scratch repositories against your signed-in `agy`. Each job is told to try things the guard must allow or refuse: reads outside the repository and through a link, edits inside and outside it and in `.git`, listed and unlisted web addresses, and a review. The check judges what actually happened, not what Gemini reports: the guard's decision for each exact call, the files on disk, a local web server's requests, and `agy`'s own record of each conversation with the raw tool results, where random tokens from outside the repository must never appear. It takes a few minutes and prints PASS, FAIL, SKIP (Gemini did not try that step) or INFO for each check. Run it after `agy` updates; `/gemini:setup` notes when `agy` is newer than the last version checked (`AGY_CHECKED_VERSION` in [`agy.mjs`](plugins/gemini/scripts/lib/agy.mjs)). `--companion <path>` checks another copy of the companion, such as the installed one, and `--keep` keeps the scratch folder.
 
 ## License
 

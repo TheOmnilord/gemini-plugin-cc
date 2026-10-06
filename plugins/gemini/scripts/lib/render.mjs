@@ -207,6 +207,11 @@ function renderAgySetup(report) {
   lines.push(`- **Ready:** ${report.ready ? "yes" : "not yet"}`);
   lines.push("- **Backend:** Antigravity CLI (`agy`), which works with personal Google accounts");
   lines.push(`- **Antigravity CLI:** ${report.agy.installed ? `${report.agy.version ?? "installed"} (${report.agy.source})` : "not installed"}`);
+  if (report.agy.newerThanChecked) {
+    lines.push(
+      `- **Note:** agy ${report.agy.version} is newer than ${report.agy.checkedVersion}, the last version this plugin was checked against. agy updates itself and has changed behavior before; if Gemini runs fail in new ways, look for a plugin update.`
+    );
+  }
   const signIn = report.signIn;
   const signInText = !signIn
     ? "not checked"

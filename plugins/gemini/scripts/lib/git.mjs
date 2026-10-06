@@ -4,6 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import process from "node:process";
 
 import { runCommand } from "./proc.mjs";
 
@@ -44,10 +45,6 @@ function gitChecked(cwd, args) {
     throw new Error(`git ${args.join(" ")} failed${detail ? `: ${detail}` : "."}`);
   }
   return result.stdout;
-}
-
-function nonEmptyLines(text) {
-  return text.split(/\r?\n/).filter((line) => line.trim() !== "");
 }
 
 export function getRepoRoot(cwd) {
@@ -98,10 +95,16 @@ export function getCurrentBranch(cwd) {
   return name || "HEAD (detached)";
 }
 
+// NUL-separated output keeps unusual file names exact: git quotes names with
+// tabs, quotes or backslashes in its line output.
+function pathList(text) {
+  return text.split("\0").filter(Boolean);
+}
+
 export function getWorkingTreeState(cwd) {
-  const staged = nonEmptyLines(gitChecked(cwd, ["diff", "--cached", "--name-only"]));
-  const unstaged = nonEmptyLines(gitChecked(cwd, ["diff", "--name-only"]));
-  const untracked = nonEmptyLines(gitChecked(cwd, ["ls-files", "--others", "--exclude-standard"]));
+  const staged = pathList(gitChecked(cwd, ["diff", "--cached", "--name-only", "-z"]));
+  const unstaged = pathList(gitChecked(cwd, ["diff", "--name-only", "-z"]));
+  const untracked = pathList(gitChecked(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]));
   return {
     staged,
     unstaged,
@@ -225,13 +228,35 @@ function packDiffSections(sections, budget) {
   };
 }
 
+// True when a path really lies inside the repository. git lists the files
+// inside an untracked link to a folder (a junction on Windows) as untracked
+// files, and reading an untracked link to a file reads its target, so both
+// are checked by where they really lead: nothing from outside the repository
+// goes into the prompt.
+function realPathInside(file, realRoot) {
+  let real;
+  try {
+    real = fs.realpathSync.native(file);
+  } catch {
+    return false;
+  }
+  const fold = (name) => (process.platform === "win32" ? name.toLowerCase() : name);
+  const relative = path.relative(fold(realRoot), fold(real));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
 function formatUntracked(repoRoot, files, budget) {
   const blocks = [];
   const skipped = [];
   let used = 0;
+  const realRoot = fs.realpathSync.native(repoRoot);
 
   for (const relative of files) {
     const absolute = path.join(repoRoot, relative);
+    if (!realPathInside(absolute, realRoot)) {
+      blocks.push(`### ${relative}\n(new file behind a link that leads out of the repository, not shown)`);
+      continue;
+    }
     let stat;
     try {
       stat = fs.statSync(absolute);
@@ -274,29 +299,105 @@ function formatUntracked(repoRoot, files, budget) {
   return { text: blocks.join("\n\n"), skipped, size: used };
 }
 
+// Splits paths into those inside the repository and the links that lead out
+// of it (a symlink, or a junction on Windows): git lists the target's files
+// under an untracked link, and reads tracked files through a folder that was
+// replaced by one. Only a link's own name goes into the prompt, never what
+// lies behind it.
+function splitByLinks(repoRoot, files, leadsOut = new Map()) {
+  const realRoot = fs.realpathSync.native(repoRoot);
+  const inside = [];
+  const links = new Set();
+  // "missing" (deleted, so nothing to read), "out" (a link that leads out,
+  // or one whose target is gone) or "in".
+  const where = (prefix) => {
+    if (!leadsOut.has(prefix)) {
+      const absolute = path.join(repoRoot, prefix);
+      let exists = true;
+      try {
+        fs.lstatSync(absolute);
+      } catch {
+        exists = false;
+      }
+      leadsOut.set(prefix, !exists ? "missing" : realPathInside(absolute, realRoot) ? "in" : "out");
+    }
+    return leadsOut.get(prefix);
+  };
+  for (const relative of files) {
+    const parts = relative.split("/");
+    let link = null;
+    for (let index = 1; index <= parts.length && !link; index += 1) {
+      const prefix = parts.slice(0, index).join("/");
+      const state = where(prefix);
+      if (state === "missing") {
+        break;
+      }
+      if (state === "out") {
+        link = prefix;
+      }
+    }
+    if (link) {
+      links.add(link);
+    } else {
+      inside.push(relative);
+    }
+  }
+  return { inside, links: [...links].sort() };
+}
+
+// git status, one entry per line, without the entries behind the links.
+function statusText(repoRoot, links, untrackedLinks) {
+  const behindLink = (file) => links.some((link) => file === link || file.startsWith(`${link}/`));
+  const entries = pathList(gitChecked(repoRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]));
+  const lines = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const code = entries[index].slice(0, 2);
+    const file = entries[index].slice(3);
+    // A rename or copy is followed by the path it came from.
+    const from = /[RC]/.test(code) ? entries[(index += 1)] : null;
+    if (!behindLink(file) && !(from && behindLink(from))) {
+      lines.push(from ? `${code} ${from} -> ${file}` : `${code} ${file}`);
+    }
+  }
+  for (const link of links) {
+    lines.push(`${untrackedLinks.includes(link) ? "??" : " M"} ${link} (a link that leads out of the repository)`);
+  }
+  return lines.join("\n");
+}
+
 function collectWorkingTree(repoRoot, budget) {
   const state = getWorkingTreeState(repoRoot);
-  const changedFiles = [...new Set([...state.staged, ...state.unstaged, ...state.untracked])].sort();
+  const leadsOut = new Map();
+  const untrackedSplit = splitByLinks(repoRoot, state.untracked, leadsOut);
+  const unstagedSplit = splitByLinks(repoRoot, state.unstaged, leadsOut);
+  const untrackedFiles = untrackedSplit.inside;
+  const links = [...new Set([...untrackedSplit.links, ...unstagedSplit.links])].sort();
+  const changedFiles = [...new Set([...state.staged, ...unstagedSplit.inside, ...untrackedFiles, ...links])].sort();
   if (changedFiles.length === 0) {
     return { empty: true, changedFiles, summary: "the working tree is clean", content: "", truncatedFiles: [], lockfiles: [] };
   }
 
-  const status = gitChecked(repoRoot, ["status", "--short", "--untracked-files=all"]);
-  const untracked = formatUntracked(repoRoot, state.untracked, Math.min(MAX_UNTRACKED_TOTAL_BYTES, Math.floor(budget / 3)));
+  const status = statusText(repoRoot, links, untrackedSplit.links);
+  const untracked = formatUntracked(repoRoot, untrackedFiles, Math.min(MAX_UNTRACKED_TOTAL_BYTES, Math.floor(budget / 3)));
+  // With only excluding pathspecs, git diffs everything else.
+  const excluded = unstagedSplit.links.length ? ["--", ...unstagedSplit.links.map((link) => `:(top,exclude,literal)${link}`)] : [];
   const packed = packDiffSections(
-    [gitChecked(repoRoot, ["diff", "--cached", ...DIFF_FLAGS]), gitChecked(repoRoot, ["diff", ...DIFF_FLAGS])],
+    [gitChecked(repoRoot, ["diff", "--cached", ...DIFF_FLAGS]), gitChecked(repoRoot, ["diff", ...DIFF_FLAGS, ...excluded])],
     Math.max(budget - untracked.size, Math.floor(budget / 2))
   );
 
   return {
     empty: false,
     changedFiles,
-    summary: `${state.staged.length} staged, ${state.unstaged.length} unstaged, ${state.untracked.length} untracked file(s)`,
+    summary: `${state.staged.length} staged, ${unstagedSplit.inside.length + unstagedSplit.links.length} unstaged, ${untrackedFiles.length + untrackedSplit.links.length} untracked file(s)`,
     content: [
       section("Git status", status),
       section("Staged diff", packed.sections[0]),
       section("Unstaged diff", packed.sections[1]),
-      section("Untracked files", untracked.text)
+      section("Untracked files", untracked.text),
+      ...(links.length
+        ? [section("Links out of the repository", links.map((link) => `- ${link}: what lies behind this link is not shown`).join("\n"))]
+        : [])
     ].join("\n"),
     truncatedFiles: [...packed.truncated, ...untracked.skipped],
     lockfiles: packed.lockfiles
@@ -306,7 +407,7 @@ function collectWorkingTree(repoRoot, budget) {
 function collectBranch(repoRoot, baseRef, budget) {
   const mergeBase = gitChecked(repoRoot, ["merge-base", "HEAD", baseRef]).trim();
   const range = `${mergeBase}..HEAD`;
-  const changedFiles = nonEmptyLines(gitChecked(repoRoot, ["diff", "--name-only", range]));
+  const changedFiles = pathList(gitChecked(repoRoot, ["diff", "--name-only", "-z", range]));
   if (changedFiles.length === 0) {
     return { empty: true, changedFiles, summary: `nothing on this branch differs from ${baseRef}`, content: "", truncatedFiles: [], lockfiles: [] };
   }
