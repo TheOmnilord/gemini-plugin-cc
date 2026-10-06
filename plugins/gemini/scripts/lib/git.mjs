@@ -99,10 +99,16 @@ export function getCurrentBranch(cwd) {
   return name || "HEAD (detached)";
 }
 
+// NUL-separated output keeps unusual file names exact: git quotes names with
+// tabs, quotes or backslashes in its line output.
+function pathList(text) {
+  return text.split("\0").filter(Boolean);
+}
+
 export function getWorkingTreeState(cwd) {
-  const staged = nonEmptyLines(gitChecked(cwd, ["diff", "--cached", "--name-only"]));
-  const unstaged = nonEmptyLines(gitChecked(cwd, ["diff", "--name-only"]));
-  const untracked = nonEmptyLines(gitChecked(cwd, ["ls-files", "--others", "--exclude-standard"]));
+  const staged = pathList(gitChecked(cwd, ["diff", "--cached", "--name-only", "-z"]));
+  const unstaged = pathList(gitChecked(cwd, ["diff", "--name-only", "-z"]));
+  const untracked = pathList(gitChecked(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]));
   return {
     staged,
     unstaged,
@@ -297,14 +303,15 @@ function formatUntracked(repoRoot, files, budget) {
   return { text: blocks.join("\n\n"), skipped, size: used };
 }
 
-// Splits untracked paths into those inside the repository and the untracked
-// links that lead out of it, under which git lists the target's files. Only
-// a link's own name goes into the prompt, never what lies behind it.
-function splitUntracked(repoRoot, files) {
+// Splits paths into those inside the repository and the links that lead out
+// of it (a symlink, or a junction on Windows): git lists the target's files
+// under an untracked link, and reads tracked files through a folder that was
+// replaced by one. Only a link's own name goes into the prompt, never what
+// lies behind it.
+function splitByLinks(repoRoot, files, leadsOut = new Map()) {
   const realRoot = fs.realpathSync.native(repoRoot);
   const inside = [];
   const links = new Set();
-  const leadsOut = new Map();
   for (const relative of files) {
     const parts = relative.split("/");
     let link = null;
@@ -326,39 +333,59 @@ function splitUntracked(repoRoot, files) {
   return { inside, links: [...links].sort() };
 }
 
+// git status, one entry per line, without the entries behind the links.
+function statusText(repoRoot, links, untrackedLinks) {
+  const behindLink = (file) => links.some((link) => file === link || file.startsWith(`${link}/`));
+  const entries = pathList(gitChecked(repoRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]));
+  const lines = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const code = entries[index].slice(0, 2);
+    const file = entries[index].slice(3);
+    // A rename or copy is followed by the path it came from.
+    const from = /[RC]/.test(code) ? entries[(index += 1)] : null;
+    if (!behindLink(file) && !(from && behindLink(from))) {
+      lines.push(from ? `${code} ${from} -> ${file}` : `${code} ${file}`);
+    }
+  }
+  for (const link of links) {
+    lines.push(`${untrackedLinks.includes(link) ? "??" : " M"} ${link} (a link that leads out of the repository)`);
+  }
+  return lines.join("\n");
+}
+
 function collectWorkingTree(repoRoot, budget) {
   const state = getWorkingTreeState(repoRoot);
-  const { inside: untrackedFiles, links } = splitUntracked(repoRoot, state.untracked);
-  const changedFiles = [...new Set([...state.staged, ...state.unstaged, ...untrackedFiles, ...links])].sort();
+  const leadsOut = new Map();
+  const untrackedSplit = splitByLinks(repoRoot, state.untracked, leadsOut);
+  const unstagedSplit = splitByLinks(repoRoot, state.unstaged, leadsOut);
+  const untrackedFiles = untrackedSplit.inside;
+  const links = [...new Set([...untrackedSplit.links, ...unstagedSplit.links])].sort();
+  const changedFiles = [...new Set([...state.staged, ...unstagedSplit.inside, ...untrackedFiles, ...links])].sort();
   if (changedFiles.length === 0) {
     return { empty: true, changedFiles, summary: "the working tree is clean", content: "", truncatedFiles: [], lockfiles: [] };
   }
 
-  const behindLink = (file) => links.some((link) => file === link || file.startsWith(`${link}/`) || file.startsWith(`"${link}/`));
-  const status = [
-    ...gitChecked(repoRoot, ["status", "--short", "--untracked-files=all"])
-      .split("\n")
-      .filter((line) => line && !behindLink(line.slice(3))),
-    ...links.map((link) => `?? ${link} (a link that leads out of the repository)`)
-  ].join("\n");
+  const status = statusText(repoRoot, links, untrackedSplit.links);
   const untracked = formatUntracked(repoRoot, untrackedFiles, Math.min(MAX_UNTRACKED_TOTAL_BYTES, Math.floor(budget / 3)));
-  untracked.text = [untracked.text, ...links.map((link) => `### ${link}\n(a link that leads out of the repository, not shown)`)]
-    .filter(Boolean)
-    .join("\n\n");
+  // With only excluding pathspecs, git diffs everything else.
+  const excluded = unstagedSplit.links.length ? ["--", ...unstagedSplit.links.map((link) => `:(top,exclude,literal)${link}`)] : [];
   const packed = packDiffSections(
-    [gitChecked(repoRoot, ["diff", "--cached", ...DIFF_FLAGS]), gitChecked(repoRoot, ["diff", ...DIFF_FLAGS])],
+    [gitChecked(repoRoot, ["diff", "--cached", ...DIFF_FLAGS]), gitChecked(repoRoot, ["diff", ...DIFF_FLAGS, ...excluded])],
     Math.max(budget - untracked.size, Math.floor(budget / 2))
   );
 
   return {
     empty: false,
     changedFiles,
-    summary: `${state.staged.length} staged, ${state.unstaged.length} unstaged, ${untrackedFiles.length + links.length} untracked file(s)`,
+    summary: `${state.staged.length} staged, ${unstagedSplit.inside.length + unstagedSplit.links.length} unstaged, ${untrackedFiles.length + untrackedSplit.links.length} untracked file(s)`,
     content: [
       section("Git status", status),
       section("Staged diff", packed.sections[0]),
       section("Unstaged diff", packed.sections[1]),
-      section("Untracked files", untracked.text)
+      section("Untracked files", untracked.text),
+      ...(links.length
+        ? [section("Links out of the repository", links.map((link) => `- ${link}: what lies behind this link is not shown`).join("\n"))]
+        : [])
     ].join("\n"),
     truncatedFiles: [...packed.truncated, ...untracked.skipped],
     lockfiles: packed.lockfiles

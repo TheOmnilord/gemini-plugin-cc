@@ -151,13 +151,41 @@ test("untracked links out of the repository are not read into the review", () =>
   assert.doesNotMatch(context.content, /OUTSIDE-SECRET|secret\.txt/);
   assert.match(context.content, /INSIDE-TEXT/);
   assert.match(context.content, /\?\? linked \(a link that leads out of the repository\)/);
-  assert.match(context.content, /### linked\n\(a link that leads out of the repository, not shown\)/);
+  assert.match(context.content, /## Links out of the repository\n\n- linked: what lies behind this link is not shown/);
   assert.ok(context.changedFiles.includes("linked"));
   assert.ok(!context.changedFiles.some((file) => file.startsWith("linked/")));
   if (fileLink) {
-    assert.match(context.content, /### notes\.txt\n\(a link that leads out of the repository, not shown\)/);
+    assert.match(context.content, /- notes\.txt: what lies behind this link is not shown/);
     assert.match(context.content, /### alias\.md \(new file\)\n```\nINSIDE-TEXT/);
   }
+});
+
+test("tracked files behind a folder replaced by a link are not diffed", () => {
+  const repo = makeRepo();
+  fs.mkdirSync(path.join(repo, "docs"));
+  fs.writeFileSync(path.join(repo, "docs", "app.txt"), "tracked\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "docs");
+  const outside = tempDir("gemini-cc-outside-");
+  fs.writeFileSync(path.join(outside, "app.txt"), "OUTSIDE-SECRET\n");
+  fs.rmSync(path.join(repo, "docs"), { recursive: true });
+  fs.symlinkSync(outside, path.join(repo, "docs"), "junction");
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.doesNotMatch(context.content, /OUTSIDE-SECRET/);
+  assert.match(context.content, /## Unstaged diff[\s\S]*\/\/ changed/);
+  assert.match(context.content, /- docs: what lies behind this link is not shown/);
+});
+
+test("unusual file names are listed exactly", () => {
+  const repo = makeRepo();
+  const name = process.platform === "win32" ? "notes 'quoted' #1.md" : 'notes\t"quoted"\\1.md';
+  fs.writeFileSync(path.join(repo, name), "NEW-TEXT\n");
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.ok(context.changedFiles.includes(name), JSON.stringify(context.changedFiles));
+  assert.match(context.content, /NEW-TEXT/);
+  assert.doesNotMatch(context.content, /Links out of the repository/);
 });
 
 test("truncates oversized diffs per file", () => {
