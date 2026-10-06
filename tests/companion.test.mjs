@@ -5,11 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { normalizeArgv, parseArgs, splitRawArgumentString } from "../plugins/gemini/scripts/lib/args.mjs";
 import { escapeAtSigns, isSupportedGeminiVersion, restoreAtSigns } from "../plugins/gemini/scripts/lib/gemini.mjs";
 import { collectReviewContext, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
-import { extractJsonObject, parseReview } from "../plugins/gemini/scripts/lib/review.mjs";
+import { extractJsonObject, parseReview, refusedTools, stoppedAfterRefusal } from "../plugins/gemini/scripts/lib/review.mjs";
 import { argAfter, argsAfter, captures, companion, git, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
 
 const FAKE_GEMINI = path.join(ROOT, "tests", "fixtures", "fake-gemini.mjs");
@@ -175,6 +176,11 @@ test("an empty review is flagged after a policy refusal, not after an ordinary t
   assert.equal(refused.status, 0, refused.stderr);
   assert.match(refused.stdout, /Possibly incomplete:.*\(`web_fetch`\)/);
 
+  const carriedOn = companion(["review"], { cwd: repo, env: makeEnv({ FAKE_GEMINI_MODE: "web-refused-then-read" }).env });
+  assert.equal(carriedOn.status, 0, carriedOn.stderr);
+  assert.match(carriedOn.stdout, /No material findings/);
+  assert.doesNotMatch(carriedOn.stdout, /Possibly incomplete/);
+
   const failed = companion(["review"], { cwd: repo, env: makeEnv({ FAKE_GEMINI_MODE: "missing-file" }).env });
   assert.equal(failed.status, 0, failed.stderr);
   assert.match(failed.stdout, /No material findings/);
@@ -317,4 +323,56 @@ test("setup reports the CLI and sign-in state", () => {
   assert.equal(report.gemini.version, "0.61.0");
   assert.equal(report.gemini.supported, true);
   assert.equal(typeof report.auth.configured, "boolean");
+});
+
+test("a run counts as stopped after a refusal only when it read no more of the repository", () => {
+  const repo = path.resolve(os.tmpdir(), "repo");
+  const outside = path.resolve(os.tmpdir(), "elsewhere", "settings.json");
+  const notes = path.resolve(os.tmpdir(), "profile", "brain", "abc", "task.md");
+  const refused = (name, startedAt, endedAt) => ({ name, status: "error", error: "tool call denied by pre-tool hook: not allowed", startedAt, endedAt });
+  const ok = (name, startedAt, endedAt, parameters = { AbsolutePath: path.join(repo, "app.js") }) => ({ name, status: "success", startedAt, endedAt, parameters });
+  const failed = (name, startedAt, endedAt) => ({ name, status: "error", error: "File not found", startedAt, endedAt });
+  const stopped = (...toolCalls) => stoppedAfterRefusal({ toolCalls }, repo);
+
+  assert.equal(stopped(), false);
+  assert.equal(stopped(ok("view_file", 1, 2), failed("view_file", 3, 4)), false);
+  assert.equal(stopped(ok("view_file", 1, 2), refused("read_url_content", 3, 4)), true);
+  assert.equal(stopped(refused("view_file", 1, 2), ok("grep_search", 3, 4, { SearchPath: repo }), ok("finish", 5, 6)), false);
+  assert.equal(stopped(refused("view_file", 1, 2), ok("read_file", 3, 4, { file_path: "app.js" })), false);
+  // Bookkeeping, notes, failed calls and reads outside the repository are not reviewing.
+  assert.equal(stopped(refused("read_url_content", 1, 2), ok("finish", 3, 4), failed("view_file", 5, 6)), true);
+  assert.equal(stopped(refused("read_url_content", 1, 2), ok("write_to_file", 3, 4, { TargetFile: notes })), true);
+  assert.equal(stopped(refused("read_url_content", 1, 2), ok("view_file", 3, 4, { AbsolutePath: notes })), true);
+  assert.equal(stopped(refused("view_file", 1, 2), ok("view_file", 3, 4, { AbsolutePath: outside })), true);
+  assert.equal(stopped(refused("view_file", 1, 2), ok("view_file", 3, 4, { AbsolutePath: "~/brain/abc/task.md" })), true);
+  assert.equal(stopped(refused("view_file", 1, 2), ok("view_file", 3, 4, { AbsolutePath: pathToFileURL(notes).href })), true);
+  assert.equal(stopped(refused("view_file", 1, 2), ok("view_file", 3, 4, { AbsolutePath: pathToFileURL(path.join(repo, "app.js")).href })), false);
+  // A read started before the refusal came back does not count, even if listed after it.
+  assert.equal(stopped(refused("view_file", 1, 3), ok("view_file", 2, 4)), true);
+  // Only the last refusal counts.
+  assert.equal(stopped(refused("view_file", 1, 2), ok("view_file", 3, 4), refused("search_web", 5, 6), ok("finish", 7, 8)), true);
+  // Records without event counts fall back to their order in the list.
+  assert.equal(stoppedAfterRefusal({ toolCalls: [refused("view_file"), ok("view_file")] }, repo), false);
+  assert.deepEqual(refusedTools({ toolCalls: [refused("view_file"), refused("view_file"), failed("grep_search")] }), ["view_file"]);
+});
+
+test("a read through a link out of the repository does not count as reading it", () => {
+  const repo = tempDir("gemini-cc-repo-");
+  const notes = tempDir("gemini-cc-notes-");
+  fs.writeFileSync(path.join(notes, "task.md"), "blocked\n");
+  fs.writeFileSync(path.join(repo, "app.js"), "x\n");
+  fs.symlinkSync(notes, path.join(repo, "notes-link"), "junction");
+  const refused = { name: "read_url_content", status: "error", error: "tool call denied by pre-tool hook: off", startedAt: 1, endedAt: 2 };
+  const read = (file) => ({ name: "view_file", status: "success", startedAt: 3, endedAt: 4, parameters: { AbsolutePath: file } });
+
+  assert.equal(stoppedAfterRefusal({ toolCalls: [refused, read(path.join(repo, "notes-link", "task.md"))] }, repo), true);
+  assert.equal(stoppedAfterRefusal({ toolCalls: [refused, read(path.join(repo, "app.js"))] }, repo), false);
+
+  // The repository reached through a link counts as the repository, by either name.
+  const alias = path.join(tempDir("gemini-cc-alias-"), "repo");
+  fs.symlinkSync(repo, alias, "junction");
+  assert.equal(stoppedAfterRefusal({ toolCalls: [refused, read("app.js")] }, alias), false);
+  assert.equal(stoppedAfterRefusal({ toolCalls: [refused, read(path.join(repo, "app.js"))] }, alias), false);
+  assert.equal(stoppedAfterRefusal({ toolCalls: [refused, read(path.join(alias, "app.js"))] }, repo), false);
+  assert.equal(stoppedAfterRefusal({ toolCalls: [refused, read("new-file.js")] }, alias), false);
 });

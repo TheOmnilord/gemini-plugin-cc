@@ -1,6 +1,11 @@
 // Parses Gemini's review answer. agy enforces the JSON schema; the Gemini CLI
 // cannot, so there the object is extracted leniently. Both are normalized.
 
+import fs from "node:fs";
+import path from "node:path";
+import process from "node:process";
+import { fileURLToPath } from "node:url";
+
 const SEVERITIES = ["critical", "high", "medium", "low"];
 
 export function extractJsonObject(text) {
@@ -86,14 +91,92 @@ export function normalizeReview(value) {
 // failed: agy's guard hook or permission check, the Gemini CLI's policy engine.
 const REFUSAL = /denied by pre-tool hook|permission check failed|Tool execution denied by policy/i;
 
-// Tools whose calls the run refused. A review that comes back empty after one
-// may have stopped to report the refusal instead of reviewing.
+// Tools that read the repository, for agy and the Gemini CLI.
+const READ_TOOLS = new Set(["view_file", "list_dir", "grep_search", "find_by_name", "read_file", "read_many_files", "list_directory", "glob", "search_file_content"]);
+const PATH_KEY = /(path|paths|file|files|directory|directories|dir|dirs)$/i;
+
+function isRefused(call) {
+  return call.status === "error" && REFUSAL.test(String(call.error ?? ""));
+}
+
+// Tools whose calls the run refused.
 export function refusedTools(run) {
   const names = (run?.toolCalls ?? [])
-    .filter((call) => call.status === "error" && REFUSAL.test(String(call.error ?? "")))
+    .filter(isRefused)
     .map((call) => call.name)
     .filter(Boolean);
   return [...new Set(names)];
+}
+
+// A path from a tool call, read the way the backends read it: relative to the
+// repository, or a file:// URL. A "~" path is never counted: agy runs with its
+// profile as the home folder, so there it names the profile, not the repository.
+function insideRepo(value, repoRoot) {
+  if (/^~(?=$|[\\/])/.test(value)) {
+    return false;
+  }
+  let file = value;
+  if (/^file:\/\//i.test(file)) {
+    try {
+      file = fileURLToPath(file);
+    } catch {
+      return false;
+    }
+  }
+  // Compared by where they really lead, so a link in the repository to the notes does not count.
+  const real = (name, base) => {
+    try {
+      return fs.realpathSync.native(path.resolve(base, name));
+    } catch {
+      return path.resolve(base, name);
+    }
+  };
+  const root = real(repoRoot, ".");
+  const fold = (name) => (process.platform === "win32" ? name.toLowerCase() : name);
+  const relative = path.relative(fold(root), fold(real(file, root)));
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+function pathValues(value, key = "", out = []) {
+  if (typeof value === "string") {
+    if (PATH_KEY.test(key) && value.trim()) {
+      out.push(value.trim());
+    }
+  } else if (Array.isArray(value)) {
+    value.forEach((item) => pathValues(item, key, out));
+  } else if (value && typeof value === "object") {
+    Object.entries(value).forEach(([innerKey, item]) => pathValues(item, innerKey, out));
+  }
+  return out;
+}
+
+// True when Gemini read nothing in the repository after its last refused call:
+// no successful read that it started once that refusal had come back. A review
+// that comes back empty then may have stopped to report the refusal instead of
+// reviewing. One that carried on (Gemini tried a file outside the repository,
+// was refused, and went on reading the change) is not flagged. Notes, finish
+// and reads already under way when the refusal arrived do not count.
+export function stoppedAfterRefusal(run, repoRoot) {
+  // Older records have no event counts; their order in the list stands in.
+  const calls = (run?.toolCalls ?? []).map((call, index) => ({
+    ...call,
+    startedAt: call.startedAt ?? index * 2,
+    endedAt: call.endedAt ?? index * 2 + 1
+  }));
+  const refusals = calls.filter(isRefused);
+  if (!refusals.length) {
+    return false;
+  }
+  const lastRefusal = Math.max(...refusals.map((call) => call.endedAt));
+  return !calls.some(
+    (call) =>
+      call.status === "success" &&
+      READ_TOOLS.has(call.name) &&
+      call.startedAt > lastRefusal &&
+      // A read that names no path searches the workspace: the Gemini CLI's
+      // default. agy's guard refuses such reads, so they never succeed there.
+      pathValues(call.parameters).every((value) => insideRepo(value, repoRoot))
+  );
 }
 
 // agy returns schema-checked output separately; the Gemini CLI only has the text.

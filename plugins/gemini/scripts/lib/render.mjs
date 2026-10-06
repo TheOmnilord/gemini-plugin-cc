@@ -102,7 +102,7 @@ export function renderReview({ label, context, focus, review, answer, job, pages
     }
     if (incomplete) {
       lines.push(
-        `> **Possibly incomplete:** Gemini returned no findings after the run refused some of its tool calls (${refused.map((name) => `\`${name}\``).join(", ")}). It may have stopped to report the restriction instead of reviewing the change. Read the summary above before relying on this result, and rerun the review if it did not cover the change.`,
+        `> **Possibly incomplete:** Gemini returned no findings and read nothing more in the repository after the run refused some of its tool calls (${refused.map((name) => `\`${name}\``).join(", ")}). It may have stopped to report the restriction instead of reviewing the change. Read the summary above before relying on this result, and rerun the review if it did not cover the change.`,
         ""
       );
     } else if (review.findings.length === 0) {

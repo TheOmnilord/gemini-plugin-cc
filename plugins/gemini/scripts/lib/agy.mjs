@@ -350,7 +350,7 @@ export function runAgy(options) {
       detached: process.platform !== "win32"
     });
 
-    const state = { sessionId: options.resumeSessionId ?? null, model: null, texts: new Map(), toolCalls: new Map(), errors: [], result: null, rawStdout: "" };
+    const state = { sessionId: options.resumeSessionId ?? null, model: null, texts: new Map(), toolCalls: new Map(), events: 0, errors: [], result: null, rawStdout: "" };
     let stdoutBuffer = "";
     let stderr = "";
     let timedOut = false;
@@ -379,14 +379,21 @@ export function runAgy(options) {
         } else if (step.step_type === "tool") {
           let call = state.toolCalls.get(index);
           if (!call) {
-            call = { id: index, name: step.tool_name ?? step.tool_info?.name ?? "tool", parameters: step.tool_info?.parameters ?? {}, status: "pending", error: null };
+            // startedAt and endedAt count stream events, so a call can be placed before or after another's result.
+            call = { id: index, name: step.tool_name ?? step.tool_info?.name ?? "tool", parameters: step.tool_info?.parameters ?? {}, status: "pending", error: null, startedAt: ++state.events, endedAt: null };
             state.toolCalls.set(index, call);
             log(`tool ${call.name} ${summarizeParams(call.parameters)}`);
           }
+          // Keep the latest arguments, in case agy fills them in after the call starts.
+          if (step.tool_info?.parameters && Object.keys(step.tool_info.parameters).length) {
+            call.parameters = step.tool_info.parameters;
+          }
           if (step.state === "DONE") {
             call.status = "success";
+            call.endedAt ??= ++state.events;
           } else if (step.state === "ERROR") {
             call.status = "error";
+            call.endedAt ??= ++state.events;
             call.error = step.tool_info?.error?.message ?? "failed";
             log(`tool ${call.name} failed: ${call.error.length > 240 ? `${call.error.slice(0, 237)}...` : call.error}`);
           }

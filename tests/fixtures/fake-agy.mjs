@@ -131,9 +131,15 @@ process.stdin.on("end", async () => {
   if (mode.startsWith("web-refused")) {
     tool("read_url_content", { Url: "https://example.com/spec" }, "ERROR", "tool call denied by pre-tool hook: Web access is off for this Gemini run.");
   }
-  if (mode === "web-refused" && flag("--json-schema")) {
-    // Gives up after the refusal, as Gemini sometimes does.
-    structured = { verdict: "approve", summary: "Could not review: read_url is not permitted. Add a read_url permission.", findings: [], next_steps: [] };
+  if (mode === "outside-refused") {
+    // Tries a file outside the repository, is refused, and carries on reading.
+    tool("view_file", { AbsolutePath: path.join(path.dirname(process.cwd()), "settings.json") }, "ERROR", "tool call denied by pre-tool hook: view_file may only read inside the repository.");
+    tool("view_file", { AbsolutePath: path.join(process.cwd(), "app.js") });
+  }
+  if (["web-refused", "outside-refused"].includes(mode) && flag("--json-schema")) {
+    // Gives up after the refusal, as Gemini sometimes does, or reviews and finds nothing.
+    const summary = mode === "web-refused" ? "Could not review: read_url is not permitted. Add a read_url permission." : "Nothing material.";
+    structured = { verdict: "approve", summary, findings: [], next_steps: [] };
     tool("finish", structured);
     answer = JSON.stringify(structured);
   } else if (flag("--json-schema")) {

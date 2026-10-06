@@ -61,7 +61,7 @@ import {
 } from "./lib/prompts.mjs";
 import * as render from "./lib/render.mjs";
 import { fetchPages, normalizeUrls } from "./lib/reference.mjs";
-import { parseReview, refusedTools } from "./lib/review.mjs";
+import { parseReview, refusedTools, stoppedAfterRefusal } from "./lib/review.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_TIMEOUT_MINUTES = { review: 20, "adversarial-review": 20, ask: 15, task: 30 };
@@ -517,7 +517,7 @@ async function handleReview(argv, kind) {
   let possiblyIncomplete = false;
   if (backend.isRunSuccessful(run)) {
     review = parseReview(run.text, run.structured);
-    possiblyIncomplete = Boolean(review && review.findings.length === 0 && refused.length);
+    possiblyIncomplete = Boolean(review && review.findings.length === 0 && stoppedAfterRefusal(run, repoRoot));
     output = render.renderReview({ label, context, focus, review, answer: run.text, job, pages, refused: possiblyIncomplete ? refused : [] });
     const summary = review ? `${possiblyIncomplete ? "possibly incomplete" : review.verdict}: ${shorten(review.summary, 90)}` : shorten(firstLine(run.text), 90);
     finishJob(job, "completed", output, summary);

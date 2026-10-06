@@ -113,6 +113,20 @@ test("an empty review after a refused tool call is flagged as possibly incomplet
   jobs.forEach((job) => assert.match(job.resultSummary, /^possibly incomplete:/));
 });
 
+test("an empty review that kept reading after a refused tool call is not flagged", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const { env } = makeEnv({ FAKE_AGY_MODE: "outside-refused" });
+
+  const result = companion(["review"], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /No material findings/);
+  assert.doesNotMatch(result.stdout, /Possibly incomplete|possibly incomplete/);
+  const json = JSON.parse(companion(["review", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(json.possiblyIncomplete, false);
+  assert.deepEqual(json.refusedTools, ["view_file"]);
+});
+
 test("a review that carries on after a refused tool call is shown as usual", () => {
   const repo = makeRepo();
   fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");

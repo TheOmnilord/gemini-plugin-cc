@@ -298,6 +298,7 @@ export function runGemini(options) {
       sessionId: options.resumeSessionId ?? options.sessionId ?? null,
       model: null,
       segments: [""],
+      events: 0,
       toolCalls: [],
       warnings: [],
       errors: [],
@@ -331,7 +332,7 @@ export function runGemini(options) {
           }
           break;
         case "tool_use":
-          state.toolCalls.push({ id: event.tool_id, name: event.tool_name, parameters: event.parameters ?? {}, status: "pending" });
+          state.toolCalls.push({ id: event.tool_id, name: event.tool_name, parameters: event.parameters ?? {}, status: "pending", startedAt: ++state.events, endedAt: null });
           state.segments.push("");
           log(`tool ${event.tool_name} ${summarizeParams(event.parameters)}`);
           break;
@@ -340,6 +341,7 @@ export function runGemini(options) {
           if (call) {
             call.status = event.status ?? "success";
             call.error = event.error?.message ?? null;
+            call.endedAt ??= ++state.events;
           }
           if (event.status === "error") {
             log(`tool error: ${event.error?.message ?? "unknown"}`);
