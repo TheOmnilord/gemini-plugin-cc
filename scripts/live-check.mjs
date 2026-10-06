@@ -211,15 +211,38 @@ const callsTo = (job, tool, target = null) =>
 // What agy stored for the job's conversations, in the profile the companion
 // used: the full transcript (every tool call and the raw result Gemini got)
 // and every other file, such as saved pages. null unless each conversation
-// has a readable transcript that holds every call the guard allowed.
+// has a readable transcript with a result for every call the guard decided,
+// allowed or refused (agy records exactly one per call).
 const profileBrain = path.join(agyProfileDir(), ".gemini", "antigravity-cli", "brain");
+function transcriptCalls(id) {
+  const steps = fs
+    .readFileSync(path.join(profileBrain, id, ".system_generated", "logs", "transcript_full.jsonl"), "utf8")
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line));
+  // Pair each call with the result that follows it.
+  const calls = [];
+  const pending = [];
+  for (const step of steps) {
+    if (step.type === "PLANNER_RESPONSE") {
+      for (const call of step.tool_calls ?? []) {
+        const entry = { name: call.name, args: call.args ?? {}, result: null };
+        calls.push(entry);
+        pending.push(entry);
+      }
+    } else if (pending.length && step.type !== "USER_INPUT") {
+      pending.shift().result = step;
+    }
+  }
+  return calls;
+}
 function storedRecords(job) {
   const ids = [...new Set(job.decisions.map((entry) => entry.conversation))];
   if (!ids.length || !ids.every((id) => /^[0-9a-f-]{8,64}$/i.test(String(id)))) {
     return null;
   }
   const parts = [];
-  const steps = [];
+  const calls = [];
   const visit = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const file = path.join(dir, entry.name);
@@ -232,29 +255,18 @@ function storedRecords(job) {
   };
   try {
     for (const id of ids) {
-      const transcript = fs.readFileSync(path.join(profileBrain, id, ".system_generated", "logs", "transcript_full.jsonl"), "utf8");
-      steps.push(...transcript.split("\n").filter((line) => line.trim()).map((line) => JSON.parse(line)));
+      const recorded = transcriptCalls(id);
+      const decided = job.decisions.filter((entry) => entry.conversation === id);
+      const complete = [...new Set(decided.map((entry) => entry.tool))].every(
+        (tool) => recorded.filter((call) => call.name === tool && call.result).length >= decided.filter((entry) => entry.tool === tool).length
+      );
+      if (!complete) {
+        return null;
+      }
+      calls.push(...recorded);
       visit(path.join(profileBrain, id));
     }
   } catch {
-    return null;
-  }
-  // Pair each call with the result that follows it.
-  const calls = [];
-  const pending = [];
-  for (const step of steps) {
-    if (step.type === "PLANNER_RESPONSE") {
-      for (const call of step.tool_calls ?? []) {
-        const record = { name: call.name, args: call.args ?? {}, result: null };
-        calls.push(record);
-        pending.push(record);
-      }
-    } else if (pending.length && step.type !== "USER_INPUT") {
-      pending.shift().result = step;
-    }
-  }
-  const allowedTools = new Set(job.decisions.filter((entry) => entry.decision === "allow").map((entry) => entry.tool));
-  if (![...allowedTools].every((tool) => calls.some((call) => call.name === tool))) {
     return null;
   }
   return { text: `${parts.join("\n")}\n${job.output}`, calls };
@@ -323,7 +335,10 @@ refused("read", "listing a link out of the repository is refused", read, "list_d
 );
 // A search over the whole repository, whose only matches sit behind the
 // link: judged from the requested search's own raw result in agy's records.
-function searchContained(name, tool, pattern) {
+// Only the exact requested search counts: the folder and the pattern as
+// given, and no option that could narrow it.
+const SEARCH_EXTRAS = new Set(["toolAction", "toolSummary", "MatchPerLine", "CaseInsensitive", "IsRegex"]);
+function searchContained(name, tool, folderKey, patternKey, pattern) {
   if (read.calls === null) {
     record("read", name, "SKIP", "agy's records not found");
     return;
@@ -331,8 +346,10 @@ function searchContained(name, tool, pattern) {
   const matching = read.calls.filter(
     (call) =>
       call.name === tool &&
-      strings(call.args).some((value) => path.isAbsolute(value) && samePath(value, readRepo)) &&
-      strings(call.args).some((value) => value.includes(pattern))
+      typeof call.args[folderKey] === "string" &&
+      samePath(call.args[folderKey], readRepo) &&
+      call.args[patternKey] === pattern &&
+      Object.keys(call.args).every((key) => key === folderKey || key === patternKey || SEARCH_EXTRAS.has(key))
   );
   const result = (call) => JSON.stringify(call.result ?? "");
   if (matching.some((call) => [secretText, hiddenName].some((text) => result(call).includes(text)))) {
@@ -343,8 +360,8 @@ function searchContained(name, tool, pattern) {
     record("read", name, "SKIP", matching.length ? "the search did not complete" : "Gemini did not run that search");
   }
 }
-searchContained("a text search does not follow links out of the repository", "grep_search", "LEAK-");
-searchContained("a file-name search does not follow links out of the repository", "find_by_name", "found-");
+searchContained("a text search does not follow links out of the repository", "grep_search", "SearchPath", "Query", "LEAK-");
+searchContained("a file-name search does not follow links out of the repository", "find_by_name", "SearchDirectory", "Pattern", "found-*.txt");
 refused("read", "edits are refused in a read-only run", read, "write_to_file", path.join(readRepo, "x.txt"), () => exists(path.join(readRepo, "x.txt")));
 refused("read", "opening a web page is refused without --allow-url", read, "read_url_content", `${base}/blocked`, () =>
   requests.includes("/blocked") ? "/blocked was requested" : ""
