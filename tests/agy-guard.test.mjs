@@ -202,3 +202,20 @@ test("the hook script reads a call on stdin and prints its decision", () => {
   assert.equal(run(JSON.stringify(call("write_to_file", { TargetFile: path.join(workspace, "a.js") }))).decision, "deny");
   assert.equal(run("not json").decision, "deny");
 });
+
+test("the hook logs each decision with its call when asked to", () => {
+  const logFile = path.join(tempDir("guard-log-"), "guard.jsonl");
+  const run = (payload) =>
+    spawnSync(process.execPath, [GUARD], { input: JSON.stringify(payload), encoding: "utf8", env: { ...process.env, ...env({ GEMINI_CC_GUARD_LOG: logFile }) } });
+  const target = path.join(workspace, "a.js");
+  run({ ...call("write_to_file", { TargetFile: target, CodeContent: "x".repeat(2000) }), conversationId: "0123abcd-ef" });
+  run(call("view_file", { AbsolutePath: target }));
+  const [write, read] = fs.readFileSync(logFile, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(write.tool, "write_to_file");
+  assert.equal(write.decision, "deny");
+  assert.equal(write.conversation, "0123abcd-ef");
+  assert.equal(write.args.TargetFile, target);
+  assert.equal(write.args.CodeContent.length, 500);
+  assert.equal(read.decision, "allow");
+  assert.equal(read.args.AbsolutePath, target);
+});

@@ -267,13 +267,30 @@ export function decide(payload, env = process.env) {
   return deny(`${tool || "This tool"} is not available to Gemini runs from Claude Code.`);
 }
 
-function logDecision(tool, result) {
+// A debugging aid (and the evidence for npm run live-check): each decision
+// with the call it was made for. Long values such as file contents are cut.
+function logDecision(payload, result) {
   const logFile = process.env.GEMINI_CC_GUARD_LOG;
   if (!logFile) {
     return;
   }
+  const short = (value) =>
+    typeof value === "string"
+      ? value.slice(0, 500)
+      : Array.isArray(value)
+        ? value.map(short)
+        : value && typeof value === "object"
+          ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, short(item)]))
+          : value;
   try {
-    fs.appendFileSync(logFile, `${JSON.stringify({ at: new Date().toISOString(), tool, ...result })}\n`);
+    const entry = {
+      at: new Date().toISOString(),
+      conversation: payload?.conversationId ?? null,
+      tool: payload?.toolCall?.name ?? null,
+      args: short(payload?.toolCall?.args ?? null),
+      ...result
+    };
+    fs.appendFileSync(logFile, `${JSON.stringify(entry)}\n`);
   } catch {
     // Logging is best effort.
   }
@@ -287,15 +304,14 @@ function main() {
   });
   process.stdin.on("end", () => {
     let result;
-    let tool = null;
+    let payload = null;
     try {
-      const payload = JSON.parse(input);
-      tool = payload?.toolCall?.name ?? null;
+      payload = JSON.parse(input);
       result = decide(payload);
     } catch (error) {
       result = deny(`The Claude Code guard could not read this tool call (${error.message}).`);
     }
-    logDecision(tool, result);
+    logDecision(payload, result);
     process.stdout.write(JSON.stringify(result));
   });
 }
