@@ -536,8 +536,11 @@ async function handleReview(argv, kind) {
   let possiblyIncomplete = false;
   if (backend.isRunSuccessful(run)) {
     review = parseReview(run.text, run.structured);
-    possiblyIncomplete = Boolean(review && review.findings.length === 0 && stoppedAfterRefusal(run, repoRoot));
-    output = render.renderReview({ label, context, focus, review, answer: run.text, job, pages, refused: possiblyIncomplete ? refused : [] });
+    const stopped = Boolean(review && review.findings.length === 0 && stoppedAfterRefusal(run, repoRoot));
+    // agy reports an API error it recovered from like one that ended the run.
+    const apiError = Boolean(run.recoveredError);
+    possiblyIncomplete = stopped || (Boolean(review) && apiError);
+    output = render.renderReview({ label, context, focus, review, answer: run.text, job, pages, refused: stopped ? refused : [], apiError });
     const summary = review ? `${possiblyIncomplete ? "possibly incomplete" : review.verdict}: ${shorten(review.summary, 90)}` : shorten(firstLine(run.text), 90);
     finishJob(job, "completed", output, summary);
   } else {
@@ -558,6 +561,10 @@ async function handleConsult(argv, kind) {
   });
   if (options.fresh && (options["resume-last"] || options.resume)) {
     throw new Error("Choose either --resume or --fresh, not both.");
+  }
+  // Unknown flags become part of the request, so this one would be sent as text.
+  if (positionals.some((token) => token === "--context-url" || token.startsWith("--context-url="))) {
+    throw new Error("--context-url is for reviews. To let Gemini open a page in an ask or task, use --allow-url <url>.");
   }
 
   const backend = getBackend();
@@ -628,7 +635,7 @@ function finalizeConsult(job, backend, run) {
   if (backend.isRunSuccessful(run)) {
     const editedFiles = job.write ? backend.touchedFiles(run, job.workspaceRoot) : [];
     const output = render.renderConsult({ job, answer: run.text, editedFiles });
-    finishJob(job, "completed", output, shorten(firstLine(run.text), 90));
+    finishJob(job, "completed", output, `${run.recoveredError ? "possibly incomplete: " : ""}${shorten(firstLine(run.text), 90)}`);
     return output;
   }
   const failure = backend.classifyFailure(run);
@@ -709,10 +716,15 @@ function handleResult(argv) {
     return;
   }
   let output = "";
-  try {
-    output = fs.readFileSync(job.resultFile ?? jobFiles(workspaceRoot, job.id).result, "utf8");
-  } catch {
-    output = `Gemini job \`${job.id}\` ended as ${job.status}${job.errorMessage ? `: ${job.errorMessage}` : "."}\n`;
+  if (job.status === "cancelled") {
+    // A cancel wins over a result written just before it landed.
+    output = `Gemini job \`${job.id}\` was cancelled.\n`;
+  } else {
+    try {
+      output = fs.readFileSync(job.resultFile ?? jobFiles(workspaceRoot, job.id).result, "utf8");
+    } catch {
+      output = `Gemini job \`${job.id}\` ended as ${job.status}${job.errorMessage ? `: ${job.errorMessage}` : "."}\n`;
+    }
   }
   write(options.json ? JSON.stringify({ job, output }, null, 2) : output);
 }

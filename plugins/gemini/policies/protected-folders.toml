@@ -1,0 +1,14 @@
+# Gemini CLI policy applied by the Claude Code gemini plugin to --write runs.
+# Files in these folders run code the next time a tool works in the
+# repository: git's hooks (.git), and the agent settings that agy (.agents)
+# and the Gemini CLI (.gemini) load from a repository, which can hold hooks
+# and MCP servers. Edits there are refused at any depth, in any case.
+# argsPattern is matched against the call's arguments as JSON, where a
+# Windows path separator appears as two backslashes.
+
+[[rule]]
+toolName = ["write_file", "replace"]
+argsPattern = '"file_path":"(?:[^"]*?(?:/|\\\\))?\.(?:[Gg][Ii][Tt]|[Aa][Gg][Ee][Nn][Tt][Ss]|[Gg][Ee][Mm][Ii][Nn][Ii])(?:/|\\\\|")'
+decision = "deny"
+priority = 999
+denyMessage = "Edits must stay outside .git, .agents and .gemini: files there run code the next time a tool works in this repository."

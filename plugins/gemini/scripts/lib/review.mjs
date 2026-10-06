@@ -91,8 +91,10 @@ export function normalizeReview(value) {
 // failed: agy's guard hook or permission check, the Gemini CLI's policy engine.
 const REFUSAL = /denied by pre-tool hook|permission check failed|Tool execution denied by policy/i;
 
-// Tools that read the repository, for agy and the Gemini CLI.
-const READ_TOOLS = new Set(["view_file", "list_dir", "grep_search", "find_by_name", "read_file", "read_many_files", "list_directory", "glob", "search_file_content"]);
+// Tools that read file contents in the repository, for agy and the Gemini
+// CLI. Listing folders or finding files by name does not count: after a
+// refused read it recovers nothing of what the review is about.
+const READ_TOOLS = new Set(["view_file", "grep_search", "read_file", "read_many_files", "search_file_content"]);
 const PATH_KEY = /(path|paths|file|files|directory|directories|dir|dirs)$/i;
 
 function isRefused(call) {

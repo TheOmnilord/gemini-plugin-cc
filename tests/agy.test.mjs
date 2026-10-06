@@ -340,6 +340,21 @@ test("a run stopped by a cancel is reported as cancelled, not as a failure", () 
   assert.equal(job.resultSummary, "Cancelled by user.");
 });
 
+test("a cancel that lands while the result is saved wins in /result too", () => {
+  const repo = makeRepo();
+  const { env, data } = makeEnv();
+  assert.equal(companion(["ask"], { cwd: repo, env, input: "Where is the bug?" }).status, 0);
+  const [job] = JSON.parse(companion(["status", "--all", "--json"], { cwd: repo, env }).stdout);
+  // The result file is written; then the cancel marker lands.
+  const state = path.join(data, "state");
+  const jobsDir = path.join(state, fs.readdirSync(state)[0], "jobs");
+  assert.ok(fs.existsSync(path.join(jobsDir, `${job.id}.md`)));
+  fs.writeFileSync(path.join(jobsDir, `${job.id}.cancel`), "");
+  const shown = companion(["result", job.id], { cwd: repo, env });
+  assert.equal(shown.stdout.trim(), `Gemini job \`${job.id}\` was cancelled.`);
+  assert.doesNotMatch(shown.stdout, /Answer from fake agy/);
+});
+
 test("agy failures are classified", () => {
   const repo = makeRepo();
   const cases = [
@@ -492,7 +507,10 @@ test("bad --context-url and --allow-url addresses are rejected before Gemini sta
   for (const [args, pattern] of [
     [["review", "--context-url", "file:///etc/passwd"], /only accepts http and https/],
     [["review", "--allow-url", "https://user:pw@example.com/"], /user name or password/],
-    [["review", "--context-url"], /Missing value for --context-url/]
+    [["review", "--context-url"], /Missing value for --context-url/],
+    // Asks and tasks have no --context-url; it must not reach Gemini as text.
+    [["ask", "--context-url", "https://example.com/spec", "What does it say?"], /--context-url is for reviews[\s\S]*--allow-url/],
+    [["task", "--context-url=https://example.com/spec", "Summarize it"], /--context-url is for reviews/]
   ]) {
     const result = companion(args, { cwd: repo, env });
     assert.equal(result.status, 1, result.stdout);
@@ -504,7 +522,7 @@ test("bad --context-url and --allow-url addresses are rejected before Gemini sta
   assert.equal(fs.existsSync(capture), false);
 });
 
-test("a run that finished despite a temporary API error counts, with a note", () => {
+test("an answer followed by a temporary API error is shown, marked possibly incomplete", () => {
   const repo = makeRepo();
   fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
   const { env } = makeEnv({ FAKE_AGY_MODE: "503-recovered" });
@@ -512,13 +530,17 @@ test("a run that finished despite a temporary API error counts, with a note", ()
   const ask = companion(["ask"], { cwd: repo, env, input: "Where is the bug?" });
   assert.equal(ask.status, 0, ask.stdout);
   assert.match(ask.stdout, /Answer from fake agy/);
-  assert.match(ask.stdout, /> \*\*Note:\*\* agy reported a temporary error from Google's API during this run \(API error \(attempt 1\): UNAVAILABLE \(code 503\)/);
+  assert.match(ask.stdout, /> \*\*Note:\*\* The run ended with a temporary error from Google's API \(API error \(attempt 1\): UNAVAILABLE \(code 503\)[^\n]*may be incomplete/);
   const review = companion(["review"], { cwd: repo, env });
   assert.equal(review.status, 0, review.stdout);
   assert.match(review.stdout, /### 1\. \[high\] Empty list crashes average\(\)/);
-  assert.match(review.stdout, /> \*\*Note:\*\* agy reported a temporary error/);
+  assert.match(review.stdout, /\*\*Verdict:\*\* needs attention \(possibly incomplete\)/);
+  assert.match(review.stdout, /> \*\*Note:\*\* The run ended with a temporary error/);
+  const reviewJson = JSON.parse(companion(["review", "--json"], { cwd: repo, env }).stdout);
+  assert.equal(reviewJson.possiblyIncomplete, true);
   const jobs = JSON.parse(companion(["status", "--all", "--json"], { cwd: repo, env }).stdout);
-  assert.deepEqual(jobs.map((job) => job.status), ["completed", "completed"]);
+  assert.deepEqual(jobs.map((job) => job.status), ["completed", "completed", "completed"]);
+  jobs.forEach((job) => assert.match(job.resultSummary, /^possibly incomplete:/));
 });
 
 test("a run that stopped on an API error, or hit a lasting one, still fails", () => {

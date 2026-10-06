@@ -528,7 +528,9 @@ export function runAgy(options) {
         warnings: [],
         // Shown with the answer.
         notices: recovered
-          ? [`agy reported a temporary error from Google's API during this run (${recovered}), and the run went on to finish with the answer above. If it looks cut off, run it again.`]
+          ? [
+              `The run ended with a temporary error from Google's API (${recovered}) after Gemini's answer above. agy reports an error it retried and recovered from the same way as one that stopped the run, so this answer may be incomplete. If it looks cut off, run it again.`
+            ]
           : [],
         errors: state.errors,
         result: state.result,

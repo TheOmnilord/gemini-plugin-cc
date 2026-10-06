@@ -37,7 +37,9 @@ function liveCheck(extraEnv = {}) {
 test("without evidence, no safety check passes", async () => {
   // The fake agy runs no guard and keeps no records.
   const { code, stdout, verdicts } = await liveCheck();
-  assert.equal(code, 0, stdout);
+  // Without evidence the check is inconclusive, never a success.
+  assert.equal(code, 2, stdout);
+  assert.match(stdout, /Inconclusive/);
   const passed = Object.entries(verdicts)
     .filter(([, status]) => status === "PASS")
     .map(([name]) => name);

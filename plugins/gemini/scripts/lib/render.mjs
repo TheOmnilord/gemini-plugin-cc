@@ -72,7 +72,7 @@ function formatLocation(finding) {
   return `\`${finding.file}:${range}\``;
 }
 
-export function renderReview({ label, context, focus, review, answer, job, pages = [], refused = [] }) {
+export function renderReview({ label, context, focus, review, answer, job, pages = [], refused = [], apiError = false }) {
   const show = unescaper(job);
   const lines = [`# Gemini ${label}`, ""];
   const meta = [`**Target:** ${context.target.label} (${context.summary})`];
@@ -85,8 +85,10 @@ export function renderReview({ label, context, focus, review, answer, job, pages
   if (job?.allowUrls?.length) {
     meta.push(`**Gemini may open:** ${job.allowUrls.join(", ")}`);
   }
-  // The companion passes refused tools only when the review is possibly incomplete.
-  const incomplete = Boolean(review) && review.findings.length === 0 && refused.length > 0;
+  // The companion passes refused tools only when the review is possibly
+  // incomplete; a run that ended with an API error may be too (see its note).
+  const refusedIncomplete = Boolean(review) && review.findings.length === 0 && refused.length > 0;
+  const incomplete = refusedIncomplete || (Boolean(review) && apiError);
   if (review) {
     meta.push(`**Verdict:** ${review.verdict === "approve" ? "approve" : "needs attention"}${incomplete ? " (possibly incomplete)" : ""}`);
   }
@@ -101,7 +103,7 @@ export function renderReview({ label, context, focus, review, answer, job, pages
     if (review.summary) {
       lines.push(show(review.summary), "");
     }
-    if (incomplete) {
+    if (refusedIncomplete) {
       lines.push(
         `> **Possibly incomplete:** Gemini returned no findings and read nothing more in the repository after the run refused some of its tool calls (${refused.map((name) => `\`${name}\``).join(", ")}). It may have stopped to report the restriction instead of reviewing the change. Read the summary above before relying on this result, and rerun the review if it did not cover the change.`,
         ""

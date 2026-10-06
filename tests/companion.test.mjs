@@ -129,6 +129,20 @@ test("collects working-tree context with untracked files and lockfiles", () => {
   assert.deepEqual(context.lockfiles, ["package-lock.json"]);
 });
 
+test("an untracked link to a network share is named without being resolved", { skip: process.platform !== "win32" }, () => {
+  const repo = makeRepo();
+  try {
+    fs.symlinkSync("\\\\attacker.example\\share", path.join(repo, "share"), "dir");
+  } catch {
+    return; // Creating symlinks needs extra rights on some Windows setups.
+  }
+  const started = Date.now();
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  // Resolving it would wait on the network; the check reads the link instead.
+  assert.ok(Date.now() - started < 5000);
+  assert.match(context.content, /- share: what lies behind this link is not shown/);
+});
+
 test("untracked links out of the repository are not read into the review", () => {
   const repo = makeRepo();
   const outside = tempDir("gemini-cc-outside-");
@@ -316,9 +330,30 @@ test("task --write uses auto_edit, keeps the user's policies and reports edited 
   const [call] = captures(capture);
   assert.equal(argAfter(call.args, "--approval-mode"), "auto_edit");
   assert.equal(argAfter(call.args, "--model"), "pro");
-  assert.deepEqual(argsAfter(call.args, "--policy").slice(1), [userPolicies]);
-  assert.deepEqual(policyNames(call.args).slice(0, 1), ["no-shell.toml"]);
+  assert.deepEqual(argsAfter(call.args, "--policy").slice(2), [userPolicies]);
+  assert.deepEqual(policyNames(call.args).slice(0, 2), ["no-shell.toml", "protected-folders.toml"]);
   assert.match(call.prompt, /You may create and edit files inside this repository/);
+});
+
+test("the Gemini CLI write policy keeps edits out of .git, .agents and .gemini", () => {
+  const toml = fs.readFileSync(path.join(ROOT, "plugins", "gemini", "policies", "protected-folders.toml"), "utf8");
+  // The Gemini CLI matches argsPattern against the call's arguments as JSON.
+  const pattern = new RegExp(/^argsPattern = '(.*)'$/m.exec(toml)[1]);
+  const refused = (file) => pattern.test(JSON.stringify({ file_path: file, content: "x" }));
+  for (const file of [
+    ".agents/hooks.json",
+    "C:\\repo\\.agents\\mcp.json",
+    "/repo/sub/.gemini/settings.json",
+    "/repo/.git/hooks/pre-commit",
+    "C:\\repo\\vendor\\.GIT\\config",
+    ".Gemini/settings.json",
+    "/repo/.git"
+  ]) {
+    assert.ok(refused(file), file);
+  }
+  for (const file of ["/repo/src/app.js", "/repo/.github/workflows/ci.yml", "/repo/.gitignore", "C:\\repo\\docs\\agents.md", "/repo/AGENTS.md", "/repo/my.gemini.txt"]) {
+    assert.ok(!refused(file), file);
+  }
 });
 
 test("auth failures explain how to sign in", () => {
@@ -432,6 +467,8 @@ test("a run counts as stopped after a refusal only when it read no more of the r
   assert.equal(stopped(refused("view_file", 1, 2), ok("view_file", 3, 4, { AbsolutePath: "~/brain/abc/task.md" })), true);
   assert.equal(stopped(refused("view_file", 1, 2), ok("view_file", 3, 4, { AbsolutePath: pathToFileURL(notes).href })), true);
   assert.equal(stopped(refused("view_file", 1, 2), ok("view_file", 3, 4, { AbsolutePath: pathToFileURL(path.join(repo, "app.js")).href })), false);
+  // Listing folders or finding files by name is not reading the change.
+  assert.equal(stopped(refused("read_url_content", 1, 2), ok("list_dir", 3, 4, { DirectoryPath: repo }), ok("find_by_name", 5, 6, { SearchDirectory: repo })), true);
   // A read started before the refusal came back does not count, even if listed after it.
   assert.equal(stopped(refused("view_file", 1, 3), ok("view_file", 2, 4)), true);
   // Only the last refusal counts.
