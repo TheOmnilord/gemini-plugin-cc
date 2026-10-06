@@ -87,9 +87,11 @@ export function splitRawArgumentString(raw) {
       continue;
     }
 
-    // Quotes only open at the start of a token and only when they are closed
-    // later, so apostrophes in free text ("the user's input") stay literal.
-    if ((char === '"' || char === "'") && !active && raw.indexOf(char, index + 1) !== -1) {
+    // Quotes only open at the start of a token, or of an option's value
+    // (--flag="a b"), and only when they are closed later, so apostrophes in
+    // free text ("the user's input") stay literal.
+    const opensValue = active && /^-[^=]*=$/.test(current);
+    if ((char === '"' || char === "'") && (!active || opensValue) && raw.indexOf(char, index + 1) !== -1) {
       quote = char;
       active = true;
       continue;

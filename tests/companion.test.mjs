@@ -52,6 +52,15 @@ test("splits raw slash-command arguments", () => {
   assert.deepEqual(splitRawArgumentString("--prompt-file C:\\tmp\\brief.md"), ["--prompt-file", "C:\\tmp\\brief.md"]);
   assert.deepEqual(normalizeArgv(["--timeout-min 9 --base main"]), ["--timeout-min", "9", "--base", "main"]);
   assert.deepEqual(normalizeArgv(["--write", "--model", "pro"]), ["--write", "--model", "pro"]);
+  // A quote may also open an option's value.
+  assert.deepEqual(splitRawArgumentString(`--context-url="https://example.com/a b" --base='main' --model=pro`), [
+    "--context-url=https://example.com/a b",
+    "--base=main",
+    "--model=pro"
+  ]);
+  // An apostrophe later in an option's value stays literal.
+  assert.deepEqual(splitRawArgumentString(`--note=it's fine`), ["--note=it's", "fine"]);
+  assert.deepEqual(splitRawArgumentString(`focus=it's "quoted"`), ["focus=it's", "quoted"]);
 });
 
 test("parses options, aliases and positionals", () => {

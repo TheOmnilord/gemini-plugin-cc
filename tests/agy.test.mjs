@@ -374,6 +374,8 @@ test("--context-url adds fetched pages to the review; Gemini still gets no web a
   const server = http.createServer((request, response) => {
     if (request.url === "/spec") {
       response.writeHead(200, { "content-type": "text/html" }).end("<h1>Spec</h1><p>average() of an empty list returns 0.</p>");
+    } else if (request.url === "/slow") {
+      // Never answers: the review waits on it until cancelled.
     } else {
       response.writeHead(404).end();
     }
@@ -395,6 +397,29 @@ test("--context-url adds fetched pages to the review; Gemini still gets no web a
     assert.equal(missing.status, 1);
     assert.match(missing.stderr, /Could not fetch .*\/gone for the review: HTTP 404/);
     assert.equal(captures(capture).length, 1);
+    // The failure is recorded on the job, so a review run in the background reports it.
+    const [failed] = JSON.parse(companion(["status", "--all", "--json"], { cwd: repo, env }).stdout);
+    assert.equal(failed.status, "failed");
+    assert.match(failed.errorMessage, /Could not fetch .*\/gone for the review: HTTP 404/);
+    const shown = companion(["result", failed.id], { cwd: repo, env });
+    assert.match(shown.stdout, /Could not fetch .*\/gone for the review: HTTP 404/);
+
+    // One quoted argument string, as a slash command passes it.
+    const quoted = await companionAsync(["review", `--context-url="${base}/spec"`], { cwd: repo, env });
+    assert.equal(quoted.status, 0, quoted.stderr);
+    assert.ok(quoted.stdout.includes(`**Reference pages:** ${base}/spec`), quoted.stdout);
+
+    // A review cancelled while its pages are fetched never starts Gemini.
+    const calls = captures(capture).length;
+    const slow = companionAsync(["review", "--context-url", `${base}/slow`], { cwd: repo, env });
+    const waiting = await waitFor(() =>
+      JSON.parse(companion(["status", "--all", "--json"], { cwd: repo, env }).stdout).find((job) => job.status === "running")
+    );
+    assert.match(companion(["cancel", waiting.id], { cwd: repo, env }).stdout, /Cancelled Gemini job/);
+    await slow;
+    const cancelled = JSON.parse(companion(["status", "--all", "--json"], { cwd: repo, env }).stdout).find((job) => job.id === waiting.id);
+    assert.equal(cancelled.status, "cancelled");
+    assert.equal(captures(capture).length, calls);
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));

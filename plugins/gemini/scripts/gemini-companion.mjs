@@ -201,6 +201,9 @@ async function readRequest(cwd, options, positionals) {
 // Returns null when the job was cancelled (before Gemini started, or while it
 // was starting and had to be stopped here), or when another process already
 // started it. A cancel during the run usually stops this process instead.
+// request.prepare, when given, runs once the job has started and returns
+// request fields that take time to gather, so a failure there is recorded on
+// the job like any other.
 async function executeJob(job, backend, request) {
   if (!startJob(job, { model: request.model ?? null })) {
     appendLog(job.logFile, "Not started: the job was cancelled, or another process started it.");
@@ -223,8 +226,13 @@ async function executeJob(job, backend, request) {
 
   let run;
   try {
+    const prepared = request.prepare ? await request.prepare() : {};
+    if (stopIfCancelled()) {
+      return null;
+    }
     run = await backend.run({
       ...request,
+      ...prepared,
       onLog: (line) => appendLog(job.logFile, line),
       onSpawn: (child) => {
         activeChildren.add(child);
@@ -478,9 +486,6 @@ async function handleReview(argv, kind) {
   }
 
   const launch = requireLaunch(backend);
-  // Every page is fetched before Gemini starts, so one that cannot be read
-  // stops the review instead of leaving it silently without that page.
-  const pages = await fetchPages(contextUrls);
   const focus = positionals.join(" ").trim();
   const job = createJob({
     kind,
@@ -493,11 +498,17 @@ async function handleReview(argv, kind) {
     allowUrls
   });
 
-  // Reviews stay grounded in the repository: no edits, no web.
+  // Reviews stay grounded in the repository: no edits, no web. Every page is
+  // fetched before Gemini starts, so one that cannot be read fails the job
+  // instead of leaving the review silently without that page.
+  let pages = [];
   const run = await executeJob(job, backend, {
     launch,
     cwd: repoRoot,
-    prompt: buildReviewPrompt(kind, context, focus, backend.prompt, { pages, allowUrls }),
+    prepare: async () => {
+      pages = await fetchPages(contextUrls);
+      return { prompt: buildReviewPrompt(kind, context, focus, backend.prompt, { pages, allowUrls }) };
+    },
     finalInstruction: REVIEW_FINAL_INSTRUCTION,
     write: false,
     web: false,
