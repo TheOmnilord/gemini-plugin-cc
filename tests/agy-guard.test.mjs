@@ -98,6 +98,22 @@ test("edits stay out of the agent settings that agy and the Gemini CLI load", ()
   }
 });
 
+test("a protected folder that is a link is not edited through its target", () => {
+  const repo = tempDir("guard-protected-link-");
+  fs.mkdirSync(path.join(repo, "config"));
+  fs.mkdirSync(path.join(repo, "src"));
+  // agy loads .agents, which here leads to config/.
+  fs.symlinkSync(path.join(repo, "config"), path.join(repo, ".agents"), "junction");
+  const write = (file) =>
+    decide(
+      { conversationId: conversation, toolCall: { name: "write_to_file", args: { TargetFile: path.join(repo, ...file.split("/")) } }, workspacePaths: [repo] },
+      env({ GEMINI_CC_MODE: "write" })
+    ).decision;
+  assert.equal(write("config/hooks.json"), "deny");
+  assert.equal(write(".agents/hooks.json"), "deny");
+  assert.equal(write("src/app.js"), "allow");
+});
+
 test("network paths are refused before the file system is touched", { skip: process.platform !== "win32" }, () => {
   // Resolving \\server\share would make Windows contact that server.
   for (const file of ["\\\\attacker.example\\share\\x.txt", "//attacker.example/share/x.txt", "\\\\?\\UNC\\attacker.example\\share\\x", "\\\\.\\pipe\\x"]) {

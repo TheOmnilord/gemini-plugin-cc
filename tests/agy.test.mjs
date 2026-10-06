@@ -543,6 +543,19 @@ test("an answer followed by a temporary API error is shown, marked possibly inco
   jobs.forEach((job) => assert.match(job.resultSummary, /^possibly incomplete:/));
 });
 
+test("a review that ends on an API error without its result is possibly incomplete", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const { env } = makeEnv({ FAKE_AGY_MODE: "503-after-progress" });
+  const result = companion(["review", "--json"], { cwd: repo, env });
+  assert.equal(result.status, 0, result.stdout);
+  const json = JSON.parse(result.stdout);
+  assert.equal(json.review, null);
+  assert.equal(json.possiblyIncomplete, true);
+  const [job] = JSON.parse(companion(["status", "--all", "--json"], { cwd: repo, env }).stdout);
+  assert.match(job.resultSummary, /^possibly incomplete: I will inspect the implementation next\./);
+});
+
 test("a run that stopped on an API error, or hit a lasting one, still fails", () => {
   const repo = makeRepo();
   const midway = companion(["ask"], { cwd: repo, env: makeEnv({ FAKE_AGY_MODE: "503-midway" }).env, input: "Where is the bug?" });

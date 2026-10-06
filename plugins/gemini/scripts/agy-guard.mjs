@@ -296,7 +296,12 @@ export function decide(payload, env = process.env) {
     if (!targets.length) {
       return deny(`${tool} did not name its target file, so the edit cannot be checked.`);
     }
-    const outside = targets.find((file) => !insideAny(file, workspaces) || inProtectedFolder(file, workspaces) || namesStream(file));
+    // Where the repository's own protected folders really are: one that is a
+    // link (.agents -> config) must not be edited through its target either.
+    const protectedPlaces = workspaces.flatMap((root) => [...PROTECTED_FOLDERS].map((name) => path.join(root, name))).filter(isEntry);
+    const outside = targets.find(
+      (file) => !insideAny(file, workspaces) || inProtectedFolder(file, workspaces) || insideAny(file, protectedPlaces) || namesStream(file)
+    );
     return outside ? deny(`Edits must stay inside the repository and outside .git, .agents and .gemini. Not allowed: ${outside}`) : allow();
   }
 

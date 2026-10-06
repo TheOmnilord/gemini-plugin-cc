@@ -98,7 +98,7 @@ How it differs:
 - The companion runs `gemini --output-format stream-json` with the prompt on stdin. Reviews and asks use `--approval-mode default`, so Gemini can only read, and the companion loads the plugin's policies at the highest user priority, so policy files inside a repository cannot loosen them:
   - [`no-shell.toml`](plugins/gemini/policies/no-shell.toml) blocks shell commands in every run.
   - [`no-edits.toml`](plugins/gemini/policies/no-edits.toml) blocks file edits in reviews, asks and read-only tasks.
-  - [`protected-folders.toml`](plugins/gemini/policies/protected-folders.toml) keeps `--write` runs out of `.git`, `.agents` and `.gemini` folders.
+  - [`protected-folders.toml`](plugins/gemini/policies/protected-folders.toml) keeps `--write` runs out of `.git`, `.agents` and `.gemini` folders. It matches the path as written, so unlike `agy`'s guard it does not catch a link that leads into one of them.
   - [`review.toml`](plugins/gemini/policies/review.toml) switches off web search and fetch for reviews.
 
   Passing `--policy` makes the Gemini CLI skip `~/.gemini/policies`, so the companion passes that folder along too.

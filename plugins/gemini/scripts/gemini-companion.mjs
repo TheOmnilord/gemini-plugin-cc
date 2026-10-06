@@ -539,9 +539,11 @@ async function handleReview(argv, kind) {
     const stopped = Boolean(review && review.findings.length === 0 && stoppedAfterRefusal(run, repoRoot));
     // agy reports an API error it recovered from like one that ended the run.
     const apiError = Boolean(run.recoveredError);
-    possiblyIncomplete = stopped || (Boolean(review) && apiError);
+    possiblyIncomplete = stopped || apiError;
     output = render.renderReview({ label, context, focus, review, answer: run.text, job, pages, refused: stopped ? refused : [], apiError });
-    const summary = review ? `${possiblyIncomplete ? "possibly incomplete" : review.verdict}: ${shorten(review.summary, 90)}` : shorten(firstLine(run.text), 90);
+    const summary = review
+      ? `${possiblyIncomplete ? "possibly incomplete" : review.verdict}: ${shorten(review.summary, 90)}`
+      : `${possiblyIncomplete ? "possibly incomplete: " : ""}${shorten(firstLine(run.text), 90)}`;
     finishJob(job, "completed", output, summary);
   } else {
     const failure = backend.classifyFailure(run);

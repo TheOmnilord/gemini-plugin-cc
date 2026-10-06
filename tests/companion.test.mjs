@@ -347,11 +347,26 @@ test("the Gemini CLI write policy keeps edits out of .git, .agents and .gemini",
     "/repo/.git/hooks/pre-commit",
     "C:\\repo\\vendor\\.GIT\\config",
     ".Gemini/settings.json",
-    "/repo/.git"
+    "/repo/.git",
+    // Spellings Windows reads as the same folder.
+    "C:\\repo\\.agents.\\hooks.json",
+    "C:\\repo\\.gemini \\settings.json",
+    "C:\\repo\\.git::$INDEX_ALLOCATION\\config",
+    "C:\\repo\\AGENTS~1\\hooks.json",
+    "C:\\repo\\GIT~1\\config"
   ]) {
     assert.ok(refused(file), file);
   }
-  for (const file of ["/repo/src/app.js", "/repo/.github/workflows/ci.yml", "/repo/.gitignore", "C:\\repo\\docs\\agents.md", "/repo/AGENTS.md", "/repo/my.gemini.txt"]) {
+  for (const file of [
+    "/repo/src/app.js",
+    "/repo/.github/workflows/ci.yml",
+    "/repo/.gitignore",
+    "C:\\repo\\docs\\agents.md",
+    "/repo/AGENTS.md",
+    "/repo/my.gemini.txt",
+    "/repo/.gemini.txt",
+    "/repo/.agentsrc"
+  ]) {
     assert.ok(!refused(file), file);
   }
 });
