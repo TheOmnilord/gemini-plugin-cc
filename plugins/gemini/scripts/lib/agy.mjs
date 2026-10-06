@@ -307,6 +307,25 @@ export function plainFileLinks(text, workspaceRoot) {
   });
 }
 
+// agy 1.3.0 checks file edits itself, and a headless run cannot answer that
+// check, so it ends the run. --mode accept-edits approves edits inside the
+// workspace and still refuses others; the guard decides first either way.
+// Older agy has no such check, and may not know the flag.
+const editModeSupport = new Map();
+function supportsEditMode(launch) {
+  const key = [launch.command, ...launch.prefixArgs].join(" ");
+  if (!editModeSupport.has(key)) {
+    const result = runCommand(launch.command, [...launch.prefixArgs, "--help"], { timeout: 30000 });
+    const supported = /--mode\b[^\n]*accept-edits/.test(`${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+    // A check that could not run is not remembered, so the next run asks again.
+    if (result.status !== 0 && !supported) {
+      return false;
+    }
+    editModeSupport.set(key, supported);
+  }
+  return editModeSupport.get(key);
+}
+
 export function runAgy(options) {
   const launch = options.launch ?? resolveAgyLaunch();
   if (!launch) {
@@ -331,6 +350,9 @@ export function runAgy(options) {
     "--model",
     model
   ];
+  if (options.write && supportsEditMode(launch)) {
+    cliArgs.push("--mode", "accept-edits");
+  }
   if (options.resumeSessionId) {
     cliArgs.push("--conversation", options.resumeSessionId);
   }
