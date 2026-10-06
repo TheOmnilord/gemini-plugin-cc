@@ -52,9 +52,13 @@ process.stdin.on("end", async () => {
   emit({ type: "tool_use", tool_name: "read_file", tool_id: "t1", parameters: { file_path: "app.js" } });
   emit({ type: "tool_result", tool_id: "t1", status: "success", output: "(file contents)" });
 
-  if (mode === "web-refused") {
+  if (mode.startsWith("web-refused")) {
     emit({ type: "tool_use", tool_name: "web_fetch", tool_id: "t3", parameters: { prompt: "Read https://example.com/spec" } });
     emit({ type: "tool_result", tool_id: "t3", status: "error", error: { type: "policy_violation", message: "Tool execution denied by policy. Web access is off for reviews." } });
+  }
+  if (mode === "web-refused-then-read") {
+    emit({ type: "tool_use", tool_name: "read_file", tool_id: "t5", parameters: { file_path: "app.js" } });
+    emit({ type: "tool_result", tool_id: "t5", status: "success" });
   } else if (mode === "missing-file") {
     // An ordinary failure, not a refusal, although the file is called policy.json.
     emit({ type: "tool_use", tool_name: "read_file", tool_id: "t4", parameters: { file_path: "policy.json" } });
@@ -62,7 +66,7 @@ process.stdin.on("end", async () => {
   }
 
   let answer;
-  if (prompt.includes("<output_contract>") && ["web-refused", "missing-file"].includes(mode)) {
+  if (prompt.includes("<output_contract>") && ["web-refused", "web-refused-then-read", "missing-file"].includes(mode)) {
     answer = JSON.stringify({ verdict: "approve", summary: "Nothing material.", findings: [], next_steps: [] });
   } else if (prompt.includes("<output_contract>")) {
     answer = JSON.stringify({
