@@ -52,7 +52,8 @@ function footer(job, extraLines = []) {
   if (usage && (usage.inputTokens != null || usage.outputTokens != null)) {
     parts.push(`${(usage.inputTokens ?? 0).toLocaleString("en-US")} in / ${(usage.outputTokens ?? 0).toLocaleString("en-US")} out tokens`);
   }
-  return ["---", `Gemini · ${parts.join(" · ")}`, ...extraLines].join("\n");
+  const notes = (job.notices ?? []).flatMap((notice) => [`> **Note:** ${notice}`, ""]);
+  return [...notes, "---", `Gemini · ${parts.join(" · ")}`, ...extraLines].join("\n");
 }
 
 // Only prompts for the Gemini CLI escape at-signs, so only its answers are restored.

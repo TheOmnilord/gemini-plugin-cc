@@ -490,3 +490,44 @@ test("bad --context-url and --allow-url addresses are rejected before Gemini sta
   assert.match(cli.stderr, /--allow-url needs the Antigravity CLI backend/);
   assert.equal(fs.existsSync(capture), false);
 });
+
+test("a run that finished despite a temporary API error counts, with a note", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const { env } = makeEnv({ FAKE_AGY_MODE: "503-recovered" });
+
+  const ask = companion(["ask"], { cwd: repo, env, input: "Where is the bug?" });
+  assert.equal(ask.status, 0, ask.stdout);
+  assert.match(ask.stdout, /Answer from fake agy/);
+  assert.match(ask.stdout, /> \*\*Note:\*\* agy reported a temporary error from Google's API during this run \(API error \(attempt 1\): UNAVAILABLE \(code 503\)/);
+  const review = companion(["review"], { cwd: repo, env });
+  assert.equal(review.status, 0, review.stdout);
+  assert.match(review.stdout, /### 1\. \[high\] Empty list crashes average\(\)/);
+  assert.match(review.stdout, /> \*\*Note:\*\* agy reported a temporary error/);
+  const jobs = JSON.parse(companion(["status", "--all", "--json"], { cwd: repo, env }).stdout);
+  assert.deepEqual(jobs.map((job) => job.status), ["completed", "completed"]);
+});
+
+test("a run that stopped on an API error, or hit a lasting one, still fails", () => {
+  const repo = makeRepo();
+  const midway = companion(["ask"], { cwd: repo, env: makeEnv({ FAKE_AGY_MODE: "503-midway" }).env, input: "Where is the bug?" });
+  assert.equal(midway.status, 1);
+  assert.match(midway.stdout, /# Gemini Ask failed[\s\S]*UNAVAILABLE \(code 503\)/);
+  assert.doesNotMatch(midway.stdout, /Note:/);
+
+  const quota = companion(["ask"], { cwd: repo, env: makeEnv({ FAKE_AGY_MODE: "quota-after-answer" }).env, input: "Where is the bug?" });
+  assert.equal(quota.status, 1);
+  assert.match(quota.stdout, /quota or usage limit/);
+});
+
+test("an answer cut off by an API error, or another error in the stream, still fails", () => {
+  const repo = makeRepo();
+  const cut = companion(["ask"], { cwd: repo, env: makeEnv({ FAKE_AGY_MODE: "503-cut-off" }).env, input: "Where is the bug?" });
+  assert.equal(cut.status, 1);
+  assert.match(cut.stdout, /# Gemini Ask failed/);
+  assert.match(cut.stdout, /The fix is to/);
+
+  const auth = companion(["ask"], { cwd: repo, env: makeEnv({ FAKE_AGY_MODE: "auth-then-503" }).env, input: "Where is the bug?" });
+  assert.equal(auth.status, 1);
+  assert.match(auth.stdout, /not signed in, or its sign-in has expired/);
+});

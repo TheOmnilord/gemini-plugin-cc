@@ -372,7 +372,7 @@ export function runAgy(options) {
       detached: process.platform !== "win32"
     });
 
-    const state = { sessionId: options.resumeSessionId ?? null, model: null, texts: new Map(), toolCalls: new Map(), events: 0, errors: [], result: null, rawStdout: "" };
+    const state = { sessionId: options.resumeSessionId ?? null, model: null, texts: new Map(), textsDone: new Set(), toolCalls: new Map(), events: 0, errors: [], result: null, rawStdout: "" };
     let stdoutBuffer = "";
     let stderr = "";
     let timedOut = false;
@@ -397,6 +397,10 @@ export function runAgy(options) {
         if (step.step_type === "agent_response") {
           if (typeof step.text_delta === "string") {
             state.texts.set(index, (state.texts.get(index) ?? "") + step.text_delta);
+          }
+          // A response streams as ACTIVE and is DONE once complete.
+          if (step.state === "DONE") {
+            state.textsDone.add(index);
           }
         } else if (step.step_type === "tool") {
           let call = state.toolCalls.get(index);
@@ -480,6 +484,13 @@ export function runAgy(options) {
       const segments = [...state.texts.entries()].sort((a, b) => a[0] - b[0]).map(([, text]) => plainFileLinks(text, options.cwd));
       const answers = segments.filter((text) => text.trim());
       const response = typeof state.result?.response === "string" ? plainFileLinks(state.result.response, options.cwd) : "";
+      const structured = state.result?.structured_output ?? null;
+      // The turn ended with Gemini's answer: schema-checked output, or a
+      // complete response after every tool call.
+      const lastText = Math.max(-1, ...[...state.texts.entries()].filter(([, text]) => text.trim()).map(([index]) => index));
+      const lastTool = Math.max(-1, ...state.toolCalls.keys());
+      const answered = structured != null || (lastText > lastTool && state.textsDone.has(lastText));
+      const recovered = recoveredError({ exitCode, timedOut, result: state.result, errors: state.errors, answered });
       resolve({
         exitCode,
         signal,
@@ -490,10 +501,15 @@ export function runAgy(options) {
         model: state.model ?? model,
         text: answers.at(-1) ?? response,
         transcript: answers.join("\n\n") || response,
-        structured: state.result?.structured_output ?? null,
+        structured,
         toolCalls: [...state.toolCalls.values()],
         deniedActions: Array.isArray(state.result?.denied_actions) ? state.result.denied_actions : [],
+        recoveredError: recovered,
         warnings: [],
+        // Shown with the answer.
+        notices: recovered
+          ? [`agy reported a temporary error from Google's API during this run (${recovered}), and the run went on to finish with the answer above. If it looks cut off, run it again.`]
+          : [],
         errors: state.errors,
         result: state.result,
         stderr: stderr.trim(),
@@ -509,18 +525,36 @@ export function runAgy(options) {
   });
 }
 
+function resultErrorMessage(result) {
+  const error = result?.error;
+  return typeof error === "string" ? error : typeof error?.message === "string" ? error.message : "";
+}
+
+// agy retries a temporary API error (503 and the like), and when the retry
+// works the run goes on, yet agy still ends it with status ERROR and that
+// error. Such a run counts when it ended with Gemini's answer. Returns the
+// error message, or null.
+const TRANSIENT_ERROR = /\b(UNAVAILABLE|INTERNAL|DEADLINE_EXCEEDED)\b|\bcode (500|502|503|504)\b|overloaded/i;
+const LASTING_ERROR = /quota|rate[- ]?limit|RESOURCE_EXHAUSTED|\b429\b|\bcredits?\b|PERMISSION_DENIED|UNAUTHENTICATED|sign[- ]?in|log[- ]?in/i;
+// Every error the run reported, in the result or as its own event, must be temporary.
+function recoveredError({ exitCode, timedOut, result, errors, answered }) {
+  const message = resultErrorMessage(result);
+  const failed = String(result?.status ?? "").toUpperCase() === "ERROR";
+  const temporary = [message, ...errors].every((text) => TRANSIENT_ERROR.test(text) && !LASTING_ERROR.test(text));
+  return !timedOut && exitCode === 0 && failed && answered && temporary ? message : null;
+}
+
 export function isAgyRunSuccessful(run) {
   return (
     !run.timedOut &&
     run.exitCode === 0 &&
-    String(run.result?.status ?? "").toUpperCase() === "SUCCESS" &&
+    (String(run.result?.status ?? "").toUpperCase() === "SUCCESS" || Boolean(run.recoveredError)) &&
     (Boolean(run.text.trim()) || run.structured != null)
   );
 }
 
 export function classifyAgyFailure(run) {
-  const resultError = run.result?.error;
-  const resultMessage = typeof resultError === "string" ? resultError : resultError?.message ?? "";
+  const resultMessage = resultErrorMessage(run.result);
   const haystack = [run.stderr, ...run.errors, resultMessage, run.rawStdout].join("\n");
   if (run.timedOut) {
     const minutes = run.timeoutMs ? Math.round(run.timeoutMs / 60000) : null;

@@ -261,6 +261,7 @@ async function executeJob(job, backend, request) {
   job.exitCode = run.exitCode;
   job.durationMs = run.durationMs;
   job.usage = backend.usageSummary(run);
+  job.notices = run.notices?.length ? run.notices : undefined;
   if (run.transcript) {
     appendLog(job.logFile, `answer:\n${run.transcript}`);
   }
