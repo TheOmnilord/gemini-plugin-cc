@@ -21,6 +21,18 @@ if (args.includes("--version")) {
   process.exit(0);
 }
 
+if (args.includes("--help")) {
+  // agy 1.3.0 lists --mode; FAKE_AGY_VERSION below 1.3 leaves it out, as older agy may.
+  const old = /^1\.[0-2]\./.test(process.env.FAKE_AGY_VERSION ?? "1.3.0");
+  const lines = ["Usage of agy.exe:", "  --agent   Agent for the current CLI session"];
+  if (!old) {
+    lines.push("  --mode    Set the agent execution mode for this session (accept-edits, plan)");
+  }
+  lines.push("  --model   Model for the current CLI session");
+  process.stderr.write(`${lines.join("\n")}\n`);
+  process.exit(0);
+}
+
 if (args[0] === "models") {
   process.stdout.write("Fetching available models...\n");
   if (mode === "signed-out") {

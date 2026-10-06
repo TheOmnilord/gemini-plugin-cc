@@ -209,8 +209,18 @@ test("task --write lets agy edit, lists the files and cleans up file links", () 
   assert.equal(call.env.mode, "write");
   assert.equal(argAfter(call.args, "--model"), "gemini-3.1-pro-high");
   assert.equal(argAfter(call.args, "--json-schema"), null);
+  // agy 1.3 checks edits itself; accept-edits lets those inside the workspace through.
+  assert.equal(argAfter(call.args, "--mode"), "accept-edits");
   assert.match(call.message, /You may create and edit files inside this repository/);
   assert.doesNotMatch(call.message, /Build and dependency files/);
+});
+
+test("an agy without --mode is not given it", () => {
+  const repo = makeRepo();
+  const { env, capture } = makeEnv({ FAKE_AGY_VERSION: "1.2.17" });
+  const result = companion(["task", "--write"], { cwd: repo, env, input: "Fix the empty-list bug." });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!captures(capture)[0].args.includes("--mode"));
 });
 
 test("a read-only conversation can continue in write mode", () => {
@@ -220,11 +230,20 @@ test("a read-only conversation can continue in write mode", () => {
   const result = companion(["task", "--write", "--resume-last"], { cwd: repo, env, input: "Apply your fix." });
   assert.equal(result.status, 0, result.stderr);
 
-  const [, resumed] = captures(capture);
+  const [first, resumed] = captures(capture);
+  assert.ok(!first.args.includes("--mode"));
+  assert.equal(argAfter(resumed.args, "--mode"), "accept-edits");
   assert.equal(argAfter(resumed.args, "--conversation"), conversationOf(repo, env, "ask"));
   assert.equal(argAfter(resumed.args, "--agent"), "gemini-cc");
   assert.equal(resumed.env.mode, "write");
   assert.match(resumed.message, /These rules apply to this turn[\s\S]*You may create and edit files/);
+
+  // And back: a read-only turn of the same conversation gets no edit mode.
+  assert.equal(companion(["ask", "--resume-last"], { cwd: repo, env, input: "Anything else?" }).status, 0);
+  const back = captures(capture)[2];
+  assert.ok(back.args.includes("--conversation"));
+  assert.ok(!back.args.includes("--mode"));
+  assert.equal(back.env.mode, "read-only");
 });
 
 test("the private agy profile carries the agent, the guard and the deny rules", () => {
