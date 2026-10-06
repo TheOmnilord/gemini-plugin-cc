@@ -47,10 +47,6 @@ function gitChecked(cwd, args) {
   return result.stdout;
 }
 
-function nonEmptyLines(text) {
-  return text.split(/\r?\n/).filter((line) => line.trim() !== "");
-}
-
 export function getRepoRoot(cwd) {
   const result = git(cwd, ["rev-parse", "--show-toplevel"]);
   if (result.error || result.status !== 0) {
@@ -411,7 +407,7 @@ function collectWorkingTree(repoRoot, budget) {
 function collectBranch(repoRoot, baseRef, budget) {
   const mergeBase = gitChecked(repoRoot, ["merge-base", "HEAD", baseRef]).trim();
   const range = `${mergeBase}..HEAD`;
-  const changedFiles = nonEmptyLines(gitChecked(repoRoot, ["diff", "--name-only", range]));
+  const changedFiles = pathList(gitChecked(repoRoot, ["diff", "--name-only", "-z", range]));
   if (changedFiles.length === 0) {
     return { empty: true, changedFiles, summary: `nothing on this branch differs from ${baseRef}`, content: "", truncatedFiles: [], lockfiles: [] };
   }
