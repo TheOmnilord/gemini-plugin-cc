@@ -159,8 +159,13 @@ export function startJob(job, fields = {}) {
     return false;
   }
   const saved = loadJob(job.workspaceRoot, job.id);
-  const age = Date.now() - Date.parse(saved?.createdAt ?? "");
-  if (saved?.status !== "queued" || !(age <= NEVER_STARTED_AFTER_MS)) {
+  if (saved?.status !== "queued") {
+    return false;
+  }
+  if (!(Date.now() - Date.parse(saved.createdAt ?? "") <= NEVER_STARTED_AFTER_MS)) {
+    // Recorded as status already shows it, so it can be pruned like any finished job.
+    Object.assign(saved, { status: "failed", completedAt: nowIso(), errorMessage: "The Gemini job never started." });
+    saveJob(saved);
     return false;
   }
   Object.assign(job, fields, { status: "running", pid: process.pid, startedAt: nowIso() });

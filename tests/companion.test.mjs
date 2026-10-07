@@ -364,7 +364,10 @@ test("the Gemini CLI write policy keeps edits out of agent settings and .git", (
     "C:\\repo\\.git::$INDEX_ALLOCATION\\config",
     "C:\\repo\\AGENTS~1\\hooks.json",
     "C:\\repo\\GIT~1\\config",
-    "C:.git\\hooks\\pre-commit"
+    "C:.git\\hooks\\pre-commit",
+    // A quote in a folder name, written as \" in JSON.
+    '/repo/a"b/.claude/settings.json',
+    '/repo/a"b/.mcp.json'
   ]) {
     assert.ok(refused(file), file);
   }

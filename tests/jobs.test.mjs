@@ -275,9 +275,15 @@ test("a job shown as never started cannot start late", () => {
   record.createdAt = new Date(Date.now() - 3 * 60 * 1000).toISOString();
   saveJob(record);
   assert.equal(listJobs(job.workspaceRoot)[0].status, "failed");
-  // ...so the worker, waking up with its old copy, does not start it.
+  // ...so the worker, waking up with its old copy, does not start it, and
+  // records it as failed so it can be pruned like any finished job.
   assert.equal(startJob(job), false);
-  assert.notEqual(loadJob(job.workspaceRoot, job.id).status, "running");
+  assert.equal(loadJob(job.workspaceRoot, job.id).status, "failed");
+  for (let index = 0; index < 45; index += 1) {
+    completeJob(createJob({ kind: "task", workspaceRoot: job.workspaceRoot, title: `other ${index}` }), "completed");
+  }
+  pruneJobs(job.workspaceRoot);
+  assert.equal(loadJob(job.workspaceRoot, job.id), null);
 });
 
 test("a worker with a stale copy cannot start a job that was cancelled and pruned", () => {

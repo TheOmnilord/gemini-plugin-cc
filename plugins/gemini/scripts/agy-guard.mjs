@@ -14,6 +14,7 @@
 // The companion copies this file next to the profile's hooks.json, so it must
 // stay self-contained: Node built-ins only.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -112,37 +113,70 @@ function namesStream(file) {
 // repository, which can hold hooks and MCP servers.
 const PROTECTED_FOLDERS = new Set([".git", ".agents", ".gemini", ".claude", ".mcp.json"]);
 
-// The folder git runs hooks from when a repository sets core.hooksPath
-// (Husky points it at .husky), read from each repository's own config.
-function hooksPaths(roots) {
-  const found = [];
+// The folders git runs hooks from, for the repository and every nested
+// repository on the way to a path, as git itself reports them: core.hooksPath
+// (Husky points it at .husky) with includes, worktrees and git's own syntax
+// taken into account. A .git that leads to a network path, or a worktree's
+// .git file whose gitdir does, is skipped unread, so git never contacts it.
+function hooksFolders(file, roots) {
+  const repositories = new Set();
   for (const root of roots) {
-    let text;
-    try {
-      text = fs.readFileSync(path.join(root, ".git", "config"), "utf8");
-    } catch {
+    const base = comparable(root);
+    const target = comparable(file);
+    if (!isInside(target, base)) {
       continue;
     }
-    let section = "";
-    for (const line of text.split(/\r?\n/)) {
-      const header = /^\s*\[\s*([^\]\s"]+)/.exec(line);
-      if (header) {
-        section = header[1].toLowerCase();
+    let dir = base;
+    const folders = path.relative(base, target).split(path.sep).filter(Boolean).slice(0, -1);
+    for (const folder of ["", ...folders]) {
+      dir = folder ? path.join(dir, folder) : dir;
+      const dotGit = path.join(dir, ".git");
+      if (!isEntry(dotGit) || leadsToNetwork(dotGit)) {
         continue;
       }
-      const entry = section === "core" ? /^\s*hookspath\s*=\s*(.*)$/i.exec(line) : null;
-      if (!entry) {
+      let gitdir = null;
+      try {
+        if (fs.lstatSync(dotGit).isFile()) {
+          gitdir = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, "utf8"))?.[1]?.trim() ?? null;
+        }
+      } catch {
         continue;
       }
-      const raw = entry[1].trim();
-      const value = raw.startsWith('"') ? raw.slice(1).split('"')[0] : raw.split(/\s+[;#]/)[0].trim();
-      // A path under ~ is outside the repository, where edits are refused anyway.
-      if (value && !value.startsWith("~")) {
-        found.push(path.resolve(root, value));
+      if (gitdir && leadsToNetwork(path.resolve(dir, gitdir))) {
+        continue;
+      }
+      repositories.add(dir);
+    }
+  }
+  const found = [];
+  for (const repository of repositories) {
+    const result = spawnSync("git", ["-C", repository, "rev-parse", "--git-path", "hooks"], { encoding: "utf8", timeout: 5000, windowsHide: true });
+    const hooks = result.status === 0 ? result.stdout.trim() : "";
+    if (hooks) {
+      const place = path.resolve(repository, hooks);
+      if (!leadsToNetwork(place)) {
+        found.push(place);
       }
     }
   }
-  return found.filter((place) => !leadsToNetwork(place));
+  return found;
+}
+
+// insideAny for the places edits must stay out of, ignoring case on every
+// system: on macOS, and on Windows, .Husky and .husky are one folder.
+function insideAnyFolded(file, places) {
+  const real = realLocation(file);
+  return (
+    Boolean(real) &&
+    places.some((place) => {
+      const realPlace = realLocation(place);
+      if (!realPlace) {
+        return false;
+      }
+      const relative = path.relative(realPlace.toLowerCase(), real.toLowerCase());
+      return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+    })
+  );
 }
 
 // A Windows network path (\\server\share\...), or a device path that is not
@@ -361,7 +395,7 @@ export function decide(payload, env = process.env) {
       (file) =>
         !insideAny(file, workspaces) ||
         inProtectedFolder(file, workspaces) ||
-        insideAny(file, [...protectedPlaces(file, workspaces), ...hooksPaths(workspaces)]) ||
+        insideAnyFolded(file, [...protectedPlaces(file, workspaces), ...hooksFolders(file, workspaces)]) ||
         namesStream(file)
     );
     return outside

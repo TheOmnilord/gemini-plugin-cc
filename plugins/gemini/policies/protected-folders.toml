@@ -9,13 +9,14 @@
 # refused.
 # argsPattern is matched against the call's arguments as JSON (with or
 # without spaces), where a Windows path separator appears as two
-# backslashes; a drive-relative path (C:.git) counts too. It sees the path as
+# backslashes and a quote in a name as \"; a drive-relative path (C:.git)
+# counts too. It sees the path as
 # written: a link into one of these folders, and a hooks folder set with
 # git's core.hooksPath, are not caught here (agy's guard checks both).
 
 [[rule]]
 toolName = ["write_file", "replace", "edit", "edit_file", "smart_edit"]
-argsPattern = '"(?:file_path|absolute_path|path)"\s*:\s*"(?:[^"]*?(?:/|\\\\|:))?(?:\.(?:[Gg][Ii][Tt]|[Aa][Gg][Ee][Nn][Tt][Ss]|[Gg][Ee][Mm][Ii][Nn][Ii]|[Cc][Ll][Aa][Uu][Dd][Ee]|[Mm][Cc][Pp]\.[Jj][Ss][Oo][Nn])[. ]*(?::[^"/\\\\]*)?|[^"/\\\\]*~[0-9][^"/\\\\]*)(?:/|\\\\|")'
+argsPattern = '"(?:file_path|absolute_path|path)"\s*:\s*"(?:(?:[^"\\]|\\.)*?(?:/|\\\\|:))?(?:\.(?:[Gg][Ii][Tt]|[Aa][Gg][Ee][Nn][Tt][Ss]|[Gg][Ee][Mm][Ii][Nn][Ii]|[Cc][Ll][Aa][Uu][Dd][Ee]|[Mm][Cc][Pp]\.[Jj][Ss][Oo][Nn])[. ]*(?::[^"/\\\\]*)?|[^"/\\\\]*~[0-9][^"/\\\\]*)(?:/|\\\\|")'
 decision = "deny"
 priority = 999
 denyMessage = "Edits must stay outside .git, .agents, .gemini, .claude and .mcp.json: files there run code the next time a tool works in this repository."
