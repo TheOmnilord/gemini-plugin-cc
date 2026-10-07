@@ -272,31 +272,41 @@ test("a filter set only in a submodule's config never runs", () => {
 });
 
 test("a filter passed down by a parent git never runs", () => {
-  const repo = makeRepo();
-  fs.writeFileSync(path.join(repo, ".gitattributes"), "app.js filter=param\n");
-  git(repo, "add", ".");
-  git(repo, "commit", "-qm", "attributes");
-  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
-  const marker = path.join(repo, "filter-ran.txt");
-  const parameters = "'filter.param.clean=echo param >> filter-ran.txt; cat'";
-  // Control: git applies it.
-  spawnSync("git", ["diff"], { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_CONFIG_PARAMETERS: parameters } });
-  assert.ok(fs.existsSync(marker));
-  fs.rmSync(marker);
+  // Git reads GIT_CONFIG_PARAMETERS last, so these would win over overrides
+  // set any other way. Both of its formats, clean and process commands, and
+  // a driver name that contains "=".
+  const cases = [
+    ["param", "'filter.param.clean=echo param >> filter-ran.txt; cat'"],
+    ["param", "'filter.param.process=echo param >> filter-ran.txt'"],
+    ["param", "'filter.param.process'='echo param >> filter-ran.txt'"],
+    ["x=y", "'filter.x=y.process'='echo x=y >> filter-ran.txt' 'filter.x=y.required'='true'"]
+  ];
+  for (const [driver, parameters] of cases) {
+    const repo = makeRepo();
+    fs.writeFileSync(path.join(repo, ".gitattributes"), `app.js filter=${driver}\n`);
+    git(repo, "add", ".");
+    git(repo, "commit", "-qm", "attributes");
+    fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+    const marker = path.join(repo, "filter-ran.txt");
+    // Control: git applies it.
+    spawnSync("git", ["diff"], { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_CONFIG_PARAMETERS: parameters } });
+    assert.ok(fs.existsSync(marker), parameters);
+    fs.rmSync(marker);
 
-  const saved = process.env.GIT_CONFIG_PARAMETERS;
-  process.env.GIT_CONFIG_PARAMETERS = parameters;
-  try {
-    const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
-    assert.match(context.content, /\/\/ changed/);
-  } finally {
-    if (saved === undefined) {
-      delete process.env.GIT_CONFIG_PARAMETERS;
-    } else {
-      process.env.GIT_CONFIG_PARAMETERS = saved;
+    const saved = process.env.GIT_CONFIG_PARAMETERS;
+    process.env.GIT_CONFIG_PARAMETERS = parameters;
+    try {
+      const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+      assert.match(context.content, /\/\/ changed/);
+    } finally {
+      if (saved === undefined) {
+        delete process.env.GIT_CONFIG_PARAMETERS;
+      } else {
+        process.env.GIT_CONFIG_PARAMETERS = saved;
+      }
     }
+    assert.equal(fs.existsSync(marker), false, parameters);
   }
-  assert.equal(fs.existsSync(marker), false);
 });
 
 test("deleted files are still reviewed", () => {
