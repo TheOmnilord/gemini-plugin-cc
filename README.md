@@ -22,7 +22,7 @@ Claude can also call the `gemini-rescue` subagent on its own when another model'
 ## Requirements
 
 - Claude Code with plugin support
-- Node.js 20+ and Git
+- Node.js 20+ and Git (2.31 or newer for reviews)
 - The Antigravity CLI. `/gemini:setup` offers to install it, or run Google's installer yourself:
   - Windows (PowerShell): `irm https://antigravity.google/cli/install.ps1 | iex`
   - macOS and Linux: `curl -fsSL https://antigravity.google/cli/install.sh | bash`

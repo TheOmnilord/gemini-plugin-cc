@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 
 import { normalizeArgv, parseArgs, splitRawArgumentString } from "../plugins/gemini/scripts/lib/args.mjs";
 import { escapeAtSigns, isSupportedGeminiVersion, restoreAtSigns } from "../plugins/gemini/scripts/lib/gemini.mjs";
-import { collectReviewContext, gitFilterOverrides, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
+import { collectReviewContext, gitFilterOverrides, isSupportedGitVersion, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
 import { extractJsonObject, parseReview, refusedTools, stoppedAfterRefusal } from "../plugins/gemini/scripts/lib/review.mjs";
 import { argAfter, argsAfter, captures, companion, git, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
 
@@ -105,6 +105,15 @@ test("checks the minimum Gemini CLI version", () => {
   assert.equal(isSupportedGeminiVersion("1.0.0"), true);
   assert.equal(isSupportedGeminiVersion("0.40.9"), false);
   assert.equal(isSupportedGeminiVersion("unknown"), null);
+});
+
+test("checks the minimum git version for reviews", () => {
+  assert.equal(isSupportedGitVersion("git version 2.31.0"), true);
+  assert.equal(isSupportedGitVersion("git version 2.55.0.windows.3"), true);
+  assert.equal(isSupportedGitVersion("git version 3.0.0"), true);
+  assert.equal(isSupportedGitVersion("git version 2.30.2"), false);
+  assert.equal(isSupportedGitVersion("git version 2.25.1"), false);
+  assert.equal(isSupportedGitVersion("unknown"), null);
 });
 
 test("escapes at-signs for transport and restores them", () => {
