@@ -189,9 +189,7 @@ export function resolveReviewTarget(cwd, { base, scope } = {}) {
   if (!["auto", "working-tree", "branch"].includes(requested)) {
     throw new Error(`Unsupported --scope "${requested}". Use auto, working-tree or branch, or pass --base <ref>.`);
   }
-  // Changes inside submodules alone also pick the working tree, whose review
-  // then says it leaves them out.
-  if (requested === "working-tree" || (requested === "auto" && (getWorkingTreeState(cwd).isDirty || dirtySubmodules(cwd).length > 0))) {
+  if (requested === "working-tree" || (requested === "auto" && getWorkingTreeState(cwd).isDirty)) {
     return { mode: "working-tree", label: "working tree diff" };
   }
   const detected = detectDefaultBranch(cwd);
@@ -561,8 +559,11 @@ function collectBranch(repoRoot, baseRef, budget) {
   const mergeBase = gitChecked(repoRoot, ["merge-base", "HEAD", baseRef]).trim();
   const range = `${mergeBase}..HEAD`;
   const changedFiles = pathList(gitChecked(repoRoot, ["diff", "--name-only", "-z", range]));
+  // Named here too, so changes made only inside a submodule are not missed
+  // when --scope auto picks the branch.
+  const skippedSubmodules = dirtySubmodules(repoRoot);
   if (changedFiles.length === 0) {
-    return { empty: true, changedFiles, summary: `nothing on this branch differs from ${baseRef}`, content: "", truncatedFiles: [], lockfiles: [] };
+    return { empty: true, changedFiles, summary: `nothing on this branch differs from ${baseRef}`, content: "", truncatedFiles: [], lockfiles: [], skippedSubmodules };
   }
 
   const log = gitChecked(repoRoot, ["log", "--oneline", "--decorate", "--no-color", range]);
@@ -577,7 +578,7 @@ function collectBranch(repoRoot, baseRef, budget) {
     content: [section("Commit log", log), section("Diff stat", stat), section("Branch diff", packed.sections[0])].join("\n"),
     truncatedFiles: packed.truncated,
     lockfiles: packed.lockfiles,
-    skippedSubmodules: []
+    skippedSubmodules
   };
 }
 

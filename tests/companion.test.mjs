@@ -298,17 +298,21 @@ test("changes only inside a submodule are named, not reviewed", () => {
   fs.writeFileSync(path.join(vendor, "new.js"), "// new\n");
   git(vendor, "mv", "app.js", "renamed.js");
 
-  // auto picks the working tree, which then has nothing outside the submodule.
+  // auto still reviews the branch, and says what it left out.
   const target = resolveReviewTarget(repo);
-  assert.equal(target.mode, "working-tree");
-  const context = collectReviewContext(repo, target);
-  assert.equal(context.empty, true);
-  assert.equal(context.summary, "the working tree has no changes outside submodules");
+  assert.equal(target.mode, "branch");
+  const branch = collectReviewContext(repo, target);
   // A rename counts once.
-  assert.deepEqual(context.skippedSubmodules, [{ name: "vendor", files: 2 }]);
-  const message = renderNothingToReview("Review", context);
+  assert.deepEqual(branch.skippedSubmodules, [{ name: "vendor", files: 2 }]);
+  const message = renderNothingToReview("Review", branch);
   assert.match(message, /Uncommitted changes inside submodule `vendor` are not part of this review/);
   assert.match(message, /--cwd vendor/);
+
+  // So does the working tree, which has nothing outside the submodule.
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.equal(context.empty, true);
+  assert.equal(context.summary, "the working tree has no changes outside submodules");
+  assert.deepEqual(context.skippedSubmodules, [{ name: "vendor", files: 2 }]);
   assert.match(buildReviewPrompt("review", context, ""), /not part of this review; do not judge or guess at them: vendor/);
 
   // A review run from inside the submodule covers them.
