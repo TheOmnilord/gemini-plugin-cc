@@ -208,7 +208,7 @@ async function readRequest(cwd, options, positionals) {
 // the job like any other.
 async function executeJob(job, backend, request) {
   if (!startJob(job, { model: request.model ?? null })) {
-    appendLog(job.logFile, "Not started: the job was cancelled, or another process started it.");
+    appendLog(job.logFile, "Not started: the job was cancelled, another process started it, or it waited too long to start.");
     return null;
   }
   const stopIfCancelled = () => {

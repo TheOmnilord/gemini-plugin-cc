@@ -106,10 +106,44 @@ function namesStream(file) {
   return resolved.slice(path.parse(resolved).root.length).includes(":");
 }
 
-// Folders whose files run code the next time a tool works in the repository:
-// git's hooks, and the agent settings that agy (.agents) and the Gemini CLI
-// (.gemini) load from a repository, which can hold hooks and MCP servers.
-const PROTECTED_FOLDERS = new Set([".git", ".agents", ".gemini"]);
+// Folders and files whose contents run code the next time a tool works in the
+// repository: git's hooks (.git), and the agent settings that agy (.agents),
+// the Gemini CLI (.gemini) and Claude Code (.claude, .mcp.json) load from a
+// repository, which can hold hooks and MCP servers.
+const PROTECTED_FOLDERS = new Set([".git", ".agents", ".gemini", ".claude", ".mcp.json"]);
+
+// The folder git runs hooks from when a repository sets core.hooksPath
+// (Husky points it at .husky), read from each repository's own config.
+function hooksPaths(roots) {
+  const found = [];
+  for (const root of roots) {
+    let text;
+    try {
+      text = fs.readFileSync(path.join(root, ".git", "config"), "utf8");
+    } catch {
+      continue;
+    }
+    let section = "";
+    for (const line of text.split(/\r?\n/)) {
+      const header = /^\s*\[\s*([^\]\s"]+)/.exec(line);
+      if (header) {
+        section = header[1].toLowerCase();
+        continue;
+      }
+      const entry = section === "core" ? /^\s*hookspath\s*=\s*(.*)$/i.exec(line) : null;
+      if (!entry) {
+        continue;
+      }
+      const raw = entry[1].trim();
+      const value = raw.startsWith('"') ? raw.slice(1).split('"')[0] : raw.split(/\s+[;#]/)[0].trim();
+      // A path under ~ is outside the repository, where edits are refused anyway.
+      if (value && !value.startsWith("~")) {
+        found.push(path.resolve(root, value));
+      }
+    }
+  }
+  return found.filter((place) => !leadsToNetwork(place));
+}
 
 // A Windows network path (\\server\share\...), or a device path that is not
 // a drive. Resolving one makes Windows contact that server, which could leak
@@ -325,9 +359,16 @@ export function decide(payload, env = process.env) {
     }
     const outside = targets.find(
       (file) =>
-        !insideAny(file, workspaces) || inProtectedFolder(file, workspaces) || insideAny(file, protectedPlaces(file, workspaces)) || namesStream(file)
+        !insideAny(file, workspaces) ||
+        inProtectedFolder(file, workspaces) ||
+        insideAny(file, [...protectedPlaces(file, workspaces), ...hooksPaths(workspaces)]) ||
+        namesStream(file)
     );
-    return outside ? deny(`Edits must stay inside the repository and outside .git, .agents and .gemini. Not allowed: ${outside}`) : allow();
+    return outside
+      ? deny(
+          `Edits must stay inside the repository and outside .git, .agents, .gemini, .claude, .mcp.json and git's hooks folder: files there run code on the next run. Not allowed: ${outside}`
+        )
+      : allow();
   }
 
   // Opening a URL is allowed only for the exact addresses the user or Claude

@@ -335,12 +335,22 @@ test("task --write uses auto_edit, keeps the user's policies and reports edited 
   assert.match(call.prompt, /You may create and edit files inside this repository/);
 });
 
-test("the Gemini CLI write policy keeps edits out of .git, .agents and .gemini", () => {
+test("the Gemini CLI write policy keeps edits out of agent settings and .git", () => {
   const toml = fs.readFileSync(path.join(ROOT, "plugins", "gemini", "policies", "protected-folders.toml"), "utf8");
+  // The policies cover every edit tool the companion knows of.
+  assert.match(toml, /toolName = \["write_file", "replace", "edit", "edit_file", "smart_edit"\]/);
+  const readOnly = fs.readFileSync(path.join(ROOT, "plugins", "gemini", "policies", "no-edits.toml"), "utf8");
+  assert.match(readOnly, /toolName = \["write_file", "replace", "edit", "edit_file", "smart_edit"\]/);
   // The Gemini CLI matches argsPattern against the call's arguments as JSON.
   const pattern = new RegExp(/^argsPattern = '(.*)'$/m.exec(toml)[1]);
   const refused = (file) => pattern.test(JSON.stringify({ file_path: file, content: "x" }));
+  // Other names a tool may give its path.
+  assert.ok(pattern.test(JSON.stringify({ absolute_path: "/repo/.claude/settings.json" })));
+  assert.ok(pattern.test(JSON.stringify({ path: "C:\\repo\\.mcp.json" })));
   for (const file of [
+    ".claude/settings.local.json",
+    "/repo/.mcp.json",
+    "C:\\repo\\.Claude\\settings.json",
     ".agents/hooks.json",
     "C:\\repo\\.agents\\mcp.json",
     "/repo/sub/.gemini/settings.json",
@@ -368,7 +378,10 @@ test("the Gemini CLI write policy keeps edits out of .git, .agents and .gemini",
     "/repo/AGENTS.md",
     "/repo/my.gemini.txt",
     "/repo/.gemini.txt",
-    "/repo/.agentsrc"
+    "/repo/.agentsrc",
+    "/repo/CLAUDE.md",
+    "/repo/docs/claude.md",
+    "/repo/mcp.json"
   ]) {
     assert.ok(!refused(file), file);
   }

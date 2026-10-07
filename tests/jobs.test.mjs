@@ -250,9 +250,8 @@ test("pruning never lets a worker paused for long start a cancelled job, nor rem
   saveJob(record);
   // ...and a job running for longer than six hours is still alive.
   const live = createJob({ kind: "task", workspaceRoot: job.workspaceRoot, title: "long" });
-  live.createdAt = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
-  saveJob(live);
   assert.equal(startJob(live), true);
+  live.createdAt = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
   live.startedAt = live.createdAt;
   saveJob(live);
   for (let index = 0; index < 45; index += 1) {
@@ -267,6 +266,35 @@ test("pruning never lets a worker paused for long start a cancelled job, nor rem
   // The long-running job is shown as failed, but its record is kept while its process lives.
   assert.equal(fs.existsSync(jobFiles(job.workspaceRoot, live.id).record), true);
   assert.equal(listJobs(job.workspaceRoot).find((item) => item.id === live.id).status, "failed");
+});
+
+test("a job shown as never started cannot start late", () => {
+  const job = newJob();
+  // The worker stalled past the start window: status shows the job as failed...
+  const record = loadJob(job.workspaceRoot, job.id);
+  record.createdAt = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+  saveJob(record);
+  assert.equal(listJobs(job.workspaceRoot)[0].status, "failed");
+  // ...so the worker, waking up with its old copy, does not start it.
+  assert.equal(startJob(job), false);
+  assert.notEqual(loadJob(job.workspaceRoot, job.id).status, "running");
+});
+
+test("a worker with a stale copy cannot start a job that was cancelled and pruned", () => {
+  const job = newJob();
+  const first = loadJob(job.workspaceRoot, job.id);
+  const delayed = loadJob(job.workspaceRoot, job.id);
+  assert.equal(cancelJob(job.workspaceRoot, job.id).cancelled, true);
+  assert.equal(startJob(first), false);
+  assert.equal(loadJob(job.workspaceRoot, job.id).status, "cancelled");
+  for (let index = 0; index < 45; index += 1) {
+    completeJob(createJob({ kind: "task", workspaceRoot: job.workspaceRoot, title: `other ${index}` }), "completed");
+  }
+  pruneJobs(job.workspaceRoot);
+  assert.equal(fs.existsSync(jobFiles(job.workspaceRoot, job.id).record), false);
+  // Its markers went with it, but the saved record decides: there is none.
+  assert.equal(startJob(delayed), false);
+  assert.equal(loadJob(job.workspaceRoot, job.id), null);
 });
 
 test("only one process can start a job", () => {

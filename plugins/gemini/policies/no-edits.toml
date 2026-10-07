@@ -5,7 +5,7 @@
 # This rule is loaded at user level with the highest priority to keep runs read-only.
 
 [[rule]]
-toolName = ["write_file", "replace"]
+toolName = ["write_file", "replace", "edit", "edit_file", "smart_edit"]
 decision = "deny"
 priority = 999
 denyMessage = "This Gemini run from Claude Code is read-only. Describe the change instead of making it."

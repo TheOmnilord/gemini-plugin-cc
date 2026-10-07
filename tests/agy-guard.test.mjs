@@ -88,14 +88,44 @@ test("edits stay out of every .git, also in nested repositories", () => {
   }
 });
 
-test("edits stay out of the agent settings that agy and the Gemini CLI load", () => {
+test("edits stay out of the agent settings that agy, the Gemini CLI and Claude Code load", () => {
   const write = (file) => decide(call("write_to_file", { TargetFile: path.join(workspace, ...file.split("/")) }), env({ GEMINI_CC_MODE: "write" }));
   // Hooks or MCP servers planted there would run on the next run in this repository.
-  for (const file of [".agents/hooks.json", ".agents/mcp.json", "packages/app/.agents/rules.json", ".gemini/settings.json", "sub/.Gemini/settings.json"]) {
+  for (const file of [
+    ".agents/hooks.json",
+    ".agents/mcp.json",
+    "packages/app/.agents/rules.json",
+    ".gemini/settings.json",
+    "sub/.Gemini/settings.json",
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".mcp.json",
+    "tools/.mcp.json"
+  ]) {
     const result = write(file);
     assert.equal(result.decision, "deny", file);
-    assert.match(result.reason, /outside \.git, \.agents and \.gemini/);
+    assert.match(result.reason, /outside \.git, \.agents, \.gemini, \.claude, \.mcp\.json and git's hooks folder/);
   }
+  assert.equal(write("docs/claude.md").decision, "allow");
+  assert.equal(write("CLAUDE.md").decision, "allow");
+});
+
+test("edits stay out of the folder git runs hooks from", () => {
+  const repo = tempDir("guard-hookspath-");
+  fs.mkdirSync(path.join(repo, ".git"));
+  // Husky points core.hooksPath at .husky; a hook planted there runs on the next commit.
+  fs.writeFileSync(path.join(repo, ".git", "config"), '[core]\n\trepositoryformatversion = 0\n\thooksPath = .husky\n[remote "origin"]\n\turl = x\n');
+  const write = (file) =>
+    decide(
+      { conversationId: conversation, toolCall: { name: "write_to_file", args: { TargetFile: path.join(repo, ...file.split("/")) } }, workspacePaths: [repo] },
+      env({ GEMINI_CC_MODE: "write" })
+    ).decision;
+  assert.equal(write(".husky/pre-commit"), "deny");
+  assert.equal(write("src/app.js"), "allow");
+  // Quoted, with a comment, in a differently cased key.
+  fs.writeFileSync(path.join(repo, ".git", "config"), '[core]\n\tHooksPath = "tools/git hooks" ; shared hooks\n');
+  assert.equal(write("tools/git hooks/pre-push"), "deny");
+  assert.equal(write("tools/build.js"), "allow");
 });
 
 test("a protected folder that is a link is not edited through its target", () => {
