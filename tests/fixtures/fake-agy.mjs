@@ -157,6 +157,12 @@ process.stdin.on("end", async () => {
     "quota-after-answer": "API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Quota exceeded.",
     "503-after-progress": "API error (attempt 3): UNAVAILABLE (code 503): The service is currently unavailable."
   };
+  if (mode === "write-then-quota") {
+    // Edits a file, then hits a lasting error.
+    tool("write_to_file", { TargetFile: path.join(process.cwd(), "notes", "draft.md") });
+    emit({ event: "result", result: { conversation_id: conversation, status: "ERROR", error: { message: "API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Quota exceeded." }, response: "", usage } });
+    process.exit(0);
+  }
   if (mode === "503-after-progress") {
     // A finished progress message, then an error that stopped the run.
     say("I will inspect the implementation next.");

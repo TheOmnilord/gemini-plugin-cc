@@ -634,14 +634,15 @@ async function handleConsult(argv, kind) {
 }
 
 function finalizeConsult(job, backend, run) {
+  // A write run lists the files Gemini edited, also when it then failed.
+  const editedFiles = job.write ? backend.touchedFiles(run, job.workspaceRoot) : [];
   if (backend.isRunSuccessful(run)) {
-    const editedFiles = job.write ? backend.touchedFiles(run, job.workspaceRoot) : [];
     const output = render.renderConsult({ job, answer: run.text, editedFiles });
     finishJob(job, "completed", output, `${run.recoveredError ? "possibly incomplete: " : ""}${shorten(firstLine(run.text), 90)}`);
     return output;
   }
   const failure = backend.classifyFailure(run);
-  const output = render.renderFailure({ title: job.title, failure, run, job });
+  const output = render.renderFailure({ title: job.title, failure, run, job, editedFiles });
   finishJob(job, "failed", output, failure.message);
   process.exitCode = 1;
   return output;
