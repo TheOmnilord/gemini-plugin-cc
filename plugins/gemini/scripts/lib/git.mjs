@@ -39,9 +39,9 @@ const LOCKFILES = new Set([
 // .gitattributes selects. Their commands can be, or call, files Gemini may
 // have edited (Git LFS too runs configured extension commands), so the
 // plugin's own git calls switch every filter off. Diffs of LFS-tracked files
-// then compare the pointer with the raw content. The overrides travel in
-// GIT_CONFIG_COUNT/KEY/VALUE, which keep key and value apart: a driver name
-// may contain "=", which -c would split on. Names are read NUL-separated.
+// then compare the pointer with the raw content. A driver name may contain
+// "=", which -c would split on, so the overrides travel in quoted 'key'='value'
+// pairs (see gitEnv). Names are read NUL-separated.
 const filterSettings = new Map();
 export function gitFilterOverrides(cwd) {
   const key = path.resolve(cwd);
@@ -67,22 +67,20 @@ export function gitFilterOverrides(cwd) {
 }
 
 // The environment for a git call: the caller's, plus the overrides above,
-// after any GIT_CONFIG_COUNT entries already set. These win over settings a
-// parent git passes down (GIT_CONFIG_PARAMETERS, tested), which are kept, as
-// they may carry needed ones such as safe.directory. Submodule working trees
+// appended to GIT_CONFIG_PARAMETERS. Git reads that variable after
+// GIT_CONFIG_COUNT entries and the last value wins, so the overrides win over
+// settings a parent git passes down (tested), which are kept, as they may
+// carry needed ones such as safe.directory. Submodule working trees
 // are not inspected (here as a default, and as --ignore-submodules=dirty on
 // each diff and status): git does that in a child process that reads the
 // submodule's own filters, which these overrides cannot name. Their commits
 // still show.
 function gitEnv(cwd) {
   const settings = [["core.fsmonitor", "false"], ["diff.ignoreSubmodules", "dirty"], ...gitFilterOverrides(cwd)];
-  const first = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? "", 10) || 0;
-  const env = { ...process.env, GIT_CONFIG_COUNT: String(first + settings.length) };
-  settings.forEach(([name, value], index) => {
-    env[`GIT_CONFIG_KEY_${first + index}`] = name;
-    env[`GIT_CONFIG_VALUE_${first + index}`] = value;
-  });
-  return env;
+  const quote = (text) => `'${text.replaceAll("'", "'\\''")}'`;
+  const own = settings.map(([name, value]) => `${quote(name)}=${quote(value)}`);
+  const inherited = process.env.GIT_CONFIG_PARAMETERS?.trim();
+  return { ...process.env, GIT_CONFIG_PARAMETERS: [...(inherited ? [inherited] : []), ...own].join(" ") };
 }
 
 function git(cwd, args) {
