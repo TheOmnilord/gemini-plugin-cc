@@ -238,6 +238,58 @@ test("collecting a review never runs a clean filter", () => {
   }
 });
 
+test("a filter set only in a submodule's config never runs", () => {
+  const repo = makeRepo();
+  const origin = makeRepo();
+  fs.writeFileSync(path.join(origin, ".gitattributes"), "*.js filter=vendor\n");
+  git(origin, "add", ".");
+  git(origin, "commit", "-qm", "attributes");
+  git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", origin, "vendor");
+  git(repo, "commit", "-qm", "submodule");
+  const vendor = path.join(repo, "vendor");
+  // The filter runs inside the submodule, so the marker lands in the parent.
+  git(vendor, "config", "filter.vendor.clean", "echo vendor >> ../filter-ran.txt; cat");
+  fs.appendFileSync(path.join(vendor, "app.js"), "// dirty\n");
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const marker = path.join(repo, "filter-ran.txt");
+  // Control: git diff in the parent inspects the submodule and runs its filter.
+  spawnSync("git", ["diff", "--submodule=diff"], { cwd: repo, encoding: "utf8" });
+  assert.ok(fs.existsSync(marker));
+  fs.rmSync(marker);
+
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.equal(fs.existsSync(marker), false);
+  assert.match(context.content, /\/\/ changed/);
+});
+
+test("a filter passed down by a parent git never runs", () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, ".gitattributes"), "app.js filter=param\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "attributes");
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const marker = path.join(repo, "filter-ran.txt");
+  const parameters = "'filter.param.clean=echo param >> filter-ran.txt; cat'";
+  // Control: git applies it.
+  spawnSync("git", ["diff"], { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_CONFIG_PARAMETERS: parameters } });
+  assert.ok(fs.existsSync(marker));
+  fs.rmSync(marker);
+
+  const saved = process.env.GIT_CONFIG_PARAMETERS;
+  process.env.GIT_CONFIG_PARAMETERS = parameters;
+  try {
+    const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+    assert.match(context.content, /\/\/ changed/);
+  } finally {
+    if (saved === undefined) {
+      delete process.env.GIT_CONFIG_PARAMETERS;
+    } else {
+      process.env.GIT_CONFIG_PARAMETERS = saved;
+    }
+  }
+  assert.equal(fs.existsSync(marker), false);
+});
+
 test("deleted files are still reviewed", () => {
   const repo = makeRepo();
   fs.mkdirSync(path.join(repo, "old"));

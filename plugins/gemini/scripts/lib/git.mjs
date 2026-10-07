@@ -64,11 +64,16 @@ export function gitFilterOverrides(cwd) {
 }
 
 // The environment for a git call: the caller's, plus the overrides above,
-// after any GIT_CONFIG_COUNT entries already set.
+// after any GIT_CONFIG_COUNT entries already set. Settings passed down by a
+// parent git (GIT_CONFIG_PARAMETERS) would be applied after these, so they
+// are dropped. Submodule working trees are not inspected: git does that in
+// a child process that reads the submodule's own filters, which these
+// overrides cannot name. Their commits still show.
 function gitEnv(cwd) {
-  const settings = [["core.fsmonitor", "false"], ...gitFilterOverrides(cwd)];
+  const settings = [["core.fsmonitor", "false"], ["diff.ignoreSubmodules", "dirty"], ...gitFilterOverrides(cwd)];
   const first = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? "", 10) || 0;
   const env = { ...process.env, GIT_CONFIG_COUNT: String(first + settings.length) };
+  delete env.GIT_CONFIG_PARAMETERS;
   settings.forEach(([name, value], index) => {
     env[`GIT_CONFIG_KEY_${first + index}`] = name;
     env[`GIT_CONFIG_VALUE_${first + index}`] = value;
