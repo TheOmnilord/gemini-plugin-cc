@@ -288,6 +288,47 @@ test("a filter set only in a submodule's config never runs", () => {
   assert.equal(fs.existsSync(marker), false);
 });
 
+test("review-size reports what a review covers without running repository filters", () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, ".gitattributes"), "app.js filter=norm\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "attributes");
+  git(repo, "config", "filter.norm.clean", "echo norm >> filter-ran.txt; cat");
+  // The same size, so even git status has to read the file, through the filter.
+  const app = path.join(repo, "app.js");
+  fs.writeFileSync(app, fs.readFileSync(app, "utf8").replace("average", "AVERAGE"));
+  fs.writeFileSync(path.join(repo, "new.js"), "export const NEW = 1;\n");
+  const marker = path.join(repo, "filter-ran.txt");
+  // Control: the plain git status the review commands used to run applies it.
+  spawnSync("git", ["status", "--short"], { cwd: repo, encoding: "utf8" });
+  assert.ok(fs.existsSync(marker));
+  fs.rmSync(marker);
+
+  const result = companion(["review-size", "--wait focus on edge cases"], { cwd: repo, env: {} });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^Review target: working tree diff \(0 staged, 1 unstaged, 1 untracked file\(s\)\)\. 2 file\(s\), about \d+ KB of diff\./);
+  const size = JSON.parse(companion(["review-size", "--json"], { cwd: repo, env: {} }).stdout);
+  assert.equal(size.mode, "working-tree");
+  assert.equal(size.files, 2);
+  assert.equal(size.empty, false);
+  assert.equal(fs.existsSync(marker), false);
+
+  git(repo, "checkout", "--", "app.js");
+  fs.rmSync(path.join(repo, "new.js"));
+  const clean = companion(["review-size", "--scope", "working-tree"], { cwd: repo, env: {} });
+  assert.equal(clean.stdout.trim(), "Nothing to review: the working tree is clean (working tree diff).");
+});
+
+test("no command lets Claude run plain git", () => {
+  const commands = path.join(ROOT, "plugins", "gemini", "commands");
+  for (const name of fs.readdirSync(commands)) {
+    assert.doesNotMatch(fs.readFileSync(path.join(commands, name), "utf8"), /Bash\(git/, name);
+  }
+  for (const name of ["review.md", "adversarial-review.md"]) {
+    assert.match(fs.readFileSync(path.join(commands, name), "utf8"), /gemini-companion\.mjs" review-size "\$ARGUMENTS"/, name);
+  }
+});
+
 test("changes only inside a submodule are named, not reviewed", () => {
   const repo = makeRepo();
   const origin = makeRepo();

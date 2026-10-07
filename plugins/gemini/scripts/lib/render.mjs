@@ -184,6 +184,12 @@ function skippedSubmodulesNote(submodules) {
   return `Uncommitted changes inside ${submodules.length === 1 ? "submodule" : "submodules"} ${names} are not part of this review. To review them, run the review from inside the submodule, for example with \`--cwd ${submodules[0].name}\`.`;
 }
 
+export function renderReviewSize(size) {
+  return size.empty
+    ? `Nothing to review: ${size.summary} (${size.target}).`
+    : `Review target: ${size.target} (${size.summary}). ${size.files} file(s), about ${size.diffKb} KB of diff.`;
+}
+
 export function renderNothingToReview(label, context) {
   const hint =
     context.target.mode === "working-tree"
