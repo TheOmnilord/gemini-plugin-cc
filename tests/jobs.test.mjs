@@ -1,7 +1,7 @@
 // Tests for the job records that background runs, status and cancel share.
 
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -301,6 +301,30 @@ test("a worker with a stale copy cannot start a job that was cancelled and prune
   // Its markers went with it, but the saved record decides: there is none.
   assert.equal(startJob(delayed), false);
   assert.equal(loadJob(job.workspaceRoot, job.id), null);
+});
+
+test("a live job stays running and cancellable within its own time limit", () => {
+  const job = newJob();
+  assert.equal(startJob(job, { timeoutMs: 10 * 60 * 60 * 1000 }), true);
+  // Eight hours in, with a ten-hour limit: still this live process's job.
+  job.startedAt = new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString();
+  saveJob(job);
+  assert.equal(listJobs(job.workspaceRoot)[0].status, "running");
+  assert.equal(cancelJob(job.workspaceRoot, job.id).cancelled, true);
+});
+
+test("a job whose backend outlives its companion stays cancellable", () => {
+  const job = newJob();
+  assert.equal(startJob(job), true);
+  // The companion is gone (a pid that has exited), the backend still runs.
+  const exited = spawnSync(process.execPath, ["-e", ""]).pid;
+  job.pid = exited;
+  job.geminiPid = process.pid;
+  saveJob(job);
+  assert.equal(listJobs(job.workspaceRoot)[0].status, "running");
+  const { cancelled, job: shown } = cancelJob(job.workspaceRoot, job.id);
+  assert.equal(cancelled, true);
+  assert.equal(shown.geminiPid, process.pid);
 });
 
 test("only one process can start a job", () => {

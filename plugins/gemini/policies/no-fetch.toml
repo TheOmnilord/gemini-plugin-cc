@@ -1,0 +1,10 @@
+# Gemini CLI policy applied by the Claude Code gemini plugin to asks and
+# tasks, which may search the web but not open pages, as with the Antigravity
+# CLI. The Gemini CLI cannot hold Gemini to exact addresses (--allow-url), so
+# fetching is off altogether; reviews use review.toml, which also blocks search.
+
+[[rule]]
+toolName = ["web_fetch"]
+decision = "deny"
+priority = 900
+denyMessage = "Opening web pages is off for this Gemini run from Claude Code and cannot be switched on from inside it. Do not ask for it: carry on using web search and the repository."

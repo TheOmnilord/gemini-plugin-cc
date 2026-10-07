@@ -42,6 +42,15 @@ test("HTML becomes readable text", () => {
   assert.equal(text, "## Limits\nMax 5 & min 1!\n\n- one\n- two");
 });
 
+test("a > inside a quoted attribute does not end the tag", () => {
+  const text = htmlToText(`<p data-rule="min > max" title='a>b'>Shown</p><noscript id="x>y">hidden</noscript><a href="/q?n=>1">after</a>`);
+  assert.equal(text, "Shown\nafter");
+  // Text with apostrophes and comparisons is untouched.
+  assert.equal(htmlToText("<p>It's 3 > 2, isn't it</p>"), "It's 3 > 2, isn't it");
+  // An unclosed quote falls back to the first ">".
+  assert.equal(htmlToText(`<p class="open>Text</p>`), "Text");
+});
+
 test("malformed HTML converts in linear time", () => {
   const size = 5 * 1024 * 1024;
   for (const unit of ["<script>", "<!--", "<", "<h1", "<a b", "&amp", "<pre>", "<pre></pre>"]) {

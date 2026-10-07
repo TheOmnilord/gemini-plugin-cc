@@ -13,6 +13,7 @@ import { isProcessAlive } from "./proc.mjs";
 const PLUGIN_ROOT = path.resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const MAX_FINISHED_JOBS = 40;
 const STALE_AFTER_MS = 6 * 60 * 60 * 1000;
+const STALE_MARGIN_MS = 10 * 60 * 1000;
 // A background worker records its pid when it starts the run, within a second or two.
 const NEVER_STARTED_AFTER_MS = 2 * 60 * 1000;
 export const ACTIVE_STATUSES = new Set(["queued", "running"]);
@@ -232,12 +233,29 @@ export function loadJob(workspaceRoot, id) {
   }
 }
 
+// Whether either of a job's processes may still be working: the companion
+// that runs it, or the backend it started (which can outlive a killed
+// companion and keep editing).
+function processAlive(job) {
+  return [job.pid, job.geminiPid].some((pid) => pid && isProcessAlive(pid));
+}
+
 function vanished(job) {
   if (!ACTIVE_STATUSES.has(job.status)) {
     return false;
   }
   const age = Date.now() - Date.parse(job.startedAt ?? job.createdAt ?? nowIso());
-  return job.pid ? !isProcessAlive(job.pid) || age > STALE_AFTER_MS : job.status === "queued" && age > NEVER_STARTED_AFTER_MS;
+  if (!job.pid) {
+    return job.status === "queued" && age > NEVER_STARTED_AFTER_MS;
+  }
+  if (!processAlive(job)) {
+    return true;
+  }
+  // A live process long past the job's own time limit is another process
+  // that reused the pid; cancelling would stop the wrong one. A job with a
+  // longer limit stays running, and cancellable, until it is past it.
+  const limit = job.timeoutMs > 0 ? Math.max(STALE_AFTER_MS, job.timeoutMs + STALE_MARGIN_MS) : STALE_AFTER_MS;
+  return age > limit;
 }
 
 // The job as status, result and cancel show it, derived from its record and
@@ -290,7 +308,7 @@ function prunable(job) {
   if (!ACTIVE_STATUSES.has(job.status)) {
     return true;
   }
-  return job.pid ? !isProcessAlive(job.pid) : vanished(job);
+  return job.pid ? !processAlive(job) : vanished(job);
 }
 
 // Keeps the newest finished jobs. A job that shows as cancelled but whose

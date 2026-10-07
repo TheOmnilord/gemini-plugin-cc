@@ -101,6 +101,7 @@ How it differs:
   - [`no-edits.toml`](plugins/gemini/policies/no-edits.toml) blocks file edits in reviews, asks and read-only tasks.
   - [`protected-folders.toml`](plugins/gemini/policies/protected-folders.toml) keeps `--write` runs out of `.git`, `.agents`, `.gemini` and `.claude` folders and `.mcp.json`. It matches the path as written, so unlike `agy`'s guard it does not catch a link that leads into one of them.
   - [`review.toml`](plugins/gemini/policies/review.toml) switches off web search and fetch for reviews.
+  - [`no-fetch.toml`](plugins/gemini/policies/no-fetch.toml) switches off opening web pages in asks and tasks, which may still search, as with the Antigravity CLI. The Gemini CLI cannot hold Gemini to exact addresses, so `--allow-url` is not available there.
 
   Passing `--policy` makes the Gemini CLI skip `~/.gemini/policies`, so the companion passes that folder along too.
 - `--write` switches to `--approval-mode auto_edit`. Gemini may then edit files inside the repository but not build files such as `package.json`, lockfiles, Makefiles or Dockerfiles, because the Gemini CLI never lets a headless run edit them.

@@ -229,7 +229,44 @@ function protectedPlaces(file, roots) {
       }
     }
   }
-  return [...places].filter((place) => isEntry(place) && !leadsToNetwork(place));
+  const found = [...places].filter((place) => isEntry(place) && !leadsToNetwork(place));
+  // A .git that is a file ("gitdir: <path>", as in worktrees and submodules)
+  // names the real git folder, which may sit elsewhere in the repository;
+  // that folder, and the shared one its commondir names, are protected too.
+  for (const place of found.filter((entry) => segmentName(path.basename(entry)) === ".git")) {
+    const pointed = gitDirsOf(place);
+    found.push(...pointed);
+  }
+  return found;
+}
+
+// The folders a .git file points to, read without following anything remote.
+function gitDirsOf(dotGit) {
+  const dirs = [];
+  try {
+    if (!fs.lstatSync(dotGit).isFile()) {
+      return dirs;
+    }
+    const gitdir = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dotGit, "utf8"))?.[1];
+    if (!gitdir) {
+      return dirs;
+    }
+    const resolved = path.resolve(path.dirname(dotGit), gitdir);
+    if (leadsToNetwork(resolved)) {
+      return dirs;
+    }
+    dirs.push(resolved);
+    const common = path.join(resolved, "commondir");
+    if (isEntry(common) && !leadsToNetwork(common)) {
+      const shared = path.resolve(resolved, fs.readFileSync(common, "utf8").trim());
+      if (!leadsToNetwork(shared)) {
+        dirs.push(shared);
+      }
+    }
+  } catch {
+    // Unreadable: nothing more to protect than the .git itself.
+  }
+  return dirs;
 }
 
 // Path-like arguments (TargetFile, AbsolutePath, SearchDirectory, ...), resolved
