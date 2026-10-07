@@ -110,6 +110,41 @@ test("edits stay out of the agent settings that agy, the Gemini CLI and Claude C
   assert.equal(write("CLAUDE.md").decision, "allow");
 });
 
+test("the git folder a .git file points to is protected", () => {
+  const repo = tempDir("guard-gitfile-");
+  // A nested repository whose .git is a pointer file, as in submodules and worktrees.
+  fs.mkdirSync(path.join(repo, "vendor", "metadata", "hooks"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "shared", "hooks"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "vendor", ".git"), "gitdir: metadata\n");
+  fs.writeFileSync(path.join(repo, "vendor", "metadata", "commondir"), "../../shared\n");
+  const write = (file) =>
+    decide(
+      { conversationId: conversation, toolCall: { name: "write_to_file", args: { TargetFile: path.join(repo, ...file.split("/")) } }, workspacePaths: [repo] },
+      env({ GEMINI_CC_MODE: "write" })
+    ).decision;
+  assert.equal(write("vendor/metadata/hooks/pre-commit"), "deny");
+  assert.equal(write("vendor/metadata/config"), "deny");
+  assert.equal(write("vendor/lib.js"), "allow");
+  // The pointer file itself.
+  assert.equal(write("vendor/.git"), "deny");
+  assert.equal(write("src/app.js"), "allow");
+
+  // A .git that is a link to a pointer file.
+  fs.mkdirSync(path.join(repo, "lib", "meta", "hooks"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "lib", "pointer"), "gitdir: meta\n");
+  let linked = false;
+  try {
+    fs.symlinkSync(path.join(repo, "lib", "pointer"), path.join(repo, "lib", ".git"), "file");
+    linked = true;
+  } catch {
+    // Links to files need extra rights on some Windows setups.
+  }
+  if (linked) {
+    assert.equal(write("lib/meta/hooks/pre-commit"), "deny");
+    assert.equal(write("lib/index.js"), "allow");
+  }
+});
+
 test("a protected folder that is a link is not edited through its target", () => {
   const repo = tempDir("guard-protected-link-");
   fs.mkdirSync(path.join(repo, "config"));

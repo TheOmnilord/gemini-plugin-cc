@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url";
 
 import { normalizeArgv, parseArgs, splitRawArgumentString } from "../plugins/gemini/scripts/lib/args.mjs";
 import { escapeAtSigns, isSupportedGeminiVersion, restoreAtSigns } from "../plugins/gemini/scripts/lib/gemini.mjs";
-import { collectReviewContext, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
+import { collectReviewContext, gitFilterOverrides, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
 import { extractJsonObject, parseReview, refusedTools, stoppedAfterRefusal } from "../plugins/gemini/scripts/lib/review.mjs";
 import { argAfter, argsAfter, captures, companion, git, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
 
@@ -208,6 +208,97 @@ test("collecting a review never runs a command set as core.fsmonitor", () => {
   assert.equal(fs.existsSync(marker), false);
 });
 
+test("collecting a review never runs a clean filter", () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, "notes.md"), "notes\n");
+  fs.writeFileSync(path.join(repo, ".gitattributes"), "app.js filter=norm\nnotes.md filter=x=y\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "attributes");
+  // Filters whose commands could be scripts Gemini edited: a plain one, one
+  // whose name contains "=", and one that looks like Git LFS on its first line.
+  git(repo, "config", "filter.norm.clean", "echo norm >> filter-ran.txt; cat");
+  git(repo, "config", "filter.norm.required", "true");
+  git(repo, "config", "filter.x=y.clean", "echo x=y >> filter-ran.txt; cat");
+  git(repo, "config", "filter.lfs.clean", "git-lfs clean -- %f\necho lfs >> filter-ran.txt");
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  fs.appendFileSync(path.join(repo, "notes.md"), "more\n");
+  // Control: plain git diff runs them.
+  spawnSync("git", ["diff"], { cwd: repo, encoding: "utf8" });
+  const marker = path.join(repo, "filter-ran.txt");
+  assert.match(fs.readFileSync(marker, "utf8"), /norm[\s\S]*x=y|x=y[\s\S]*norm/);
+  fs.rmSync(marker);
+
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.equal(fs.existsSync(marker), false);
+  assert.match(context.content, /\/\/ changed/);
+  assert.match(context.content, /\+more/);
+  const keys = gitFilterOverrides(repo).map(([key]) => key);
+  for (const key of ["filter.norm.clean", "filter.x=y.clean", "filter.x=y.process", "filter.lfs.clean"]) {
+    assert.ok(keys.includes(key), key);
+  }
+});
+
+test("a filter set only in a submodule's config never runs", () => {
+  const repo = makeRepo();
+  const origin = makeRepo();
+  fs.writeFileSync(path.join(origin, ".gitattributes"), "*.js filter=vendor\n");
+  git(origin, "add", ".");
+  git(origin, "commit", "-qm", "attributes");
+  git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", origin, "vendor");
+  git(repo, "commit", "-qm", "submodule");
+  const vendor = path.join(repo, "vendor");
+  // The filter runs inside the submodule, so the marker lands in the parent.
+  git(vendor, "config", "filter.vendor.clean", "echo vendor >> ../filter-ran.txt; cat");
+  fs.appendFileSync(path.join(vendor, "app.js"), "// dirty\n");
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const marker = path.join(repo, "filter-ran.txt");
+  // Control: git diff in the parent inspects the submodule and runs its filter.
+  spawnSync("git", ["diff", "--submodule=diff"], { cwd: repo, encoding: "utf8" });
+  assert.ok(fs.existsSync(marker));
+  fs.rmSync(marker);
+
+  const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.equal(fs.existsSync(marker), false);
+  assert.match(context.content, /\/\/ changed/);
+
+  // Also when .gitmodules, which Gemini may edit, asks git to inspect it.
+  git(repo, "config", "-f", ".gitmodules", "submodule.vendor.ignore", "none");
+  git(repo, "config", "submodule.vendor.ignore", "none");
+  spawnSync("git", ["diff", "--submodule=diff"], { cwd: repo, encoding: "utf8" });
+  assert.ok(fs.existsSync(marker));
+  fs.rmSync(marker);
+  collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.equal(fs.existsSync(marker), false);
+});
+
+test("a filter passed down by a parent git never runs", () => {
+  const repo = makeRepo();
+  fs.writeFileSync(path.join(repo, ".gitattributes"), "app.js filter=param\n");
+  git(repo, "add", ".");
+  git(repo, "commit", "-qm", "attributes");
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const marker = path.join(repo, "filter-ran.txt");
+  const parameters = "'filter.param.clean=echo param >> filter-ran.txt; cat'";
+  // Control: git applies it.
+  spawnSync("git", ["diff"], { cwd: repo, encoding: "utf8", env: { ...process.env, GIT_CONFIG_PARAMETERS: parameters } });
+  assert.ok(fs.existsSync(marker));
+  fs.rmSync(marker);
+
+  const saved = process.env.GIT_CONFIG_PARAMETERS;
+  process.env.GIT_CONFIG_PARAMETERS = parameters;
+  try {
+    const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+    assert.match(context.content, /\/\/ changed/);
+  } finally {
+    if (saved === undefined) {
+      delete process.env.GIT_CONFIG_PARAMETERS;
+    } else {
+      process.env.GIT_CONFIG_PARAMETERS = saved;
+    }
+  }
+  assert.equal(fs.existsSync(marker), false);
+});
+
 test("deleted files are still reviewed", () => {
   const repo = makeRepo();
   fs.mkdirSync(path.join(repo, "old"));
@@ -329,7 +420,8 @@ test("ask can resume the previous Gemini conversation", () => {
   const [firstCall, secondCall] = captures(capture);
   assert.match(firstCall.prompt, /It's used by the "stats" page\./);
   assert.equal(argAfter(firstCall.args, "--approval-mode"), "default");
-  assert.deepEqual(policyNames(firstCall.args), ["no-shell.toml", "no-edits.toml"]);
+  // Asks may search the web but not open pages.
+  assert.deepEqual(policyNames(firstCall.args), ["no-shell.toml", "no-edits.toml", "no-fetch.toml"]);
   assert.equal(argAfter(secondCall.args, "--resume"), argAfter(firstCall.args, "--session-id"));
   assert.match(secondCall.prompt, /<follow_up>\nWhat about NaN inputs\?\n<\/follow_up>/);
 });
@@ -346,8 +438,8 @@ test("task --write uses auto_edit, keeps the user's policies and reports edited 
   const [call] = captures(capture);
   assert.equal(argAfter(call.args, "--approval-mode"), "auto_edit");
   assert.equal(argAfter(call.args, "--model"), "pro");
-  assert.deepEqual(argsAfter(call.args, "--policy").slice(2), [userPolicies]);
-  assert.deepEqual(policyNames(call.args).slice(0, 2), ["no-shell.toml", "protected-folders.toml"]);
+  assert.deepEqual(argsAfter(call.args, "--policy").slice(3), [userPolicies]);
+  assert.deepEqual(policyNames(call.args).slice(0, 3), ["no-shell.toml", "protected-folders.toml", "no-fetch.toml"]);
   assert.match(call.prompt, /You may create and edit files inside this repository/);
 });
 

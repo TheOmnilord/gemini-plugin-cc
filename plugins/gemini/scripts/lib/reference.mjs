@@ -133,6 +133,36 @@ function tagText(name, closing) {
 // Readable text from HTML: no scripts, styles or markup, one block per line.
 // One pass with indexOf, so malformed input cannot make it slow: when a
 // closing marker is missing, the rest of the page is dropped or kept as text.
+// Where a tag really ends: a ">" inside a quoted attribute value
+// (data-x="a > b") does not end it. The scan stops after a fixed number of
+// characters and falls back to the first ">", so broken quoting cannot make
+// the conversion slower than linear.
+const TAG_SCAN_LIMIT = 2048;
+function quotedTagEnd(source, open, firstClose) {
+  let quote = null;
+  let afterEquals = false;
+  const limit = Math.min(source.length, open + TAG_SCAN_LIMIT);
+  for (let index = open + 1; index < limit; index += 1) {
+    const char = source[index];
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      }
+    } else if ((char === '"' || char === "'") && afterEquals) {
+      quote = char;
+    } else if (char === ">") {
+      return index;
+    } else if (char === "=") {
+      afterEquals = true;
+      continue;
+    }
+    if (!/\s/.test(char)) {
+      afterEquals = false;
+    }
+  }
+  return firstClose;
+}
+
 export function htmlToText(html) {
   const source = String(html ?? "");
   // ASCII-only, so offsets match source: toLowerCase() turns some characters,
@@ -186,6 +216,7 @@ export function htmlToText(html) {
       continue;
     }
     const [, slash, name] = tag;
+    close = quotedTagEnd(source, open, close);
     if (!slash && SKIPPED.has(name) && source[close - 1] !== "/") {
       const end = lower.indexOf(`</${name}`, close + 1);
       const after = end === -1 ? -1 : source.indexOf(">", end);

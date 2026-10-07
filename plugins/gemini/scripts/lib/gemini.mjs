@@ -34,15 +34,16 @@ export class GeminiUnavailableError extends Error {
 }
 
 // Every run blocks shell commands, read-only runs also block edits, write
-// runs keep edits out of folders whose files run code, and runs without web
-// access block web tools. Passing --policy makes the Gemini CLI skip the
-// user's own policy folder, so that folder is passed along too.
+// runs keep edits out of folders whose files run code, and every run blocks
+// opening web pages (reviews block web search too). Passing --policy makes
+// the Gemini CLI skip the user's own policy folder, so that folder is passed
+// along too.
 export function geminiPolicyFiles({ write = false, web = true } = {}) {
   const files = [path.join(POLICIES_DIR, "no-shell.toml")];
   files.push(path.join(POLICIES_DIR, write ? "protected-folders.toml" : "no-edits.toml"));
-  if (!web) {
-    files.push(path.join(POLICIES_DIR, "review.toml"));
-  }
+  // Reviews have no web access at all; asks and tasks may search but, as
+  // with agy, not open pages.
+  files.push(path.join(POLICIES_DIR, web ? "no-fetch.toml" : "review.toml"));
   const userPolicies = path.join(geminiHomeDir(), "policies");
   if (fs.existsSync(userPolicies)) {
     files.push(userPolicies);
