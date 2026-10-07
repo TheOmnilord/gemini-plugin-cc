@@ -68,6 +68,8 @@ test("review runs through agy read-only, without web, with the review schema", (
   assert.match(result.stdout, /### 1\. \[high\] Empty list crashes average\(\)/);
   assert.match(result.stdout, /`app\.js:2-3`/);
   assert.match(result.stdout, /The @param doc/);
+  assert.match(result.stdout, /\*\*Unverified assumptions:\*\*\n- Callers may pass an empty list\./);
+  assert.equal(result.stdout.match(/Unverified assumptions/g).length, 1);
   assert.match(result.stdout, /gemini-3\.8-flash-medium · .* · 2,100 in \/ 42 out tokens/);
 
   const [call] = captures(capture);
@@ -92,6 +94,23 @@ test("review runs through agy read-only, without web, with the review schema", (
   assert.match(call.message, /perform the review now/);
   assert.match(call.message, /no web access in this review/);
   assert.doesNotMatch(result.stdout, /Possibly incomplete/);
+});
+
+test("adversarial reviews default to Pro unless a model is named", () => {
+  const repo = makeRepo();
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  const runs = [
+    [["adversarial-review"], {}, "gemini-3.1-pro-high"],
+    [["adversarial-review", "--model", "flash-low"], {}, "gemini-3.8-flash-low"],
+    [["adversarial-review"], { GEMINI_COMPANION_MODEL: "flash" }, "gemini-3.8-flash-medium"],
+    [["review"], {}, "gemini-3.8-flash-medium"]
+  ];
+  for (const [args, extra, model] of runs) {
+    const { env, capture } = makeEnv(extra);
+    const result = companion(args, { cwd: repo, env });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(argAfter(captures(capture)[0].args, "--model"), model, args.join(" "));
+  }
 });
 
 test("an empty review after a refused tool call is flagged as possibly incomplete", () => {

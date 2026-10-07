@@ -114,10 +114,16 @@ function workspaceRootFor(cwd) {
   return getRepoRoot(cwd) ?? path.resolve(cwd);
 }
 
-function resolveModel(options) {
+// fallback: the model when neither --model nor GEMINI_COMPANION_MODEL names
+// one; null leaves the choice to the backend.
+function resolveModel(options, fallback = null) {
   const model = String(options.model ?? process.env.GEMINI_COMPANION_MODEL ?? "").trim();
-  return model || null;
+  return model || fallback;
 }
+
+// Adversarial reviews default to Pro: in trials on this plugin's own changes,
+// the Flash default approved a diff in which Pro found a real problem.
+const ADVERSARIAL_REVIEW_MODEL = "pro";
 
 function resolveTimeoutMs(options, kind) {
   const raw = options["timeout-min"];
@@ -522,7 +528,7 @@ async function handleReview(argv, kind) {
     web: false,
     allowUrls,
     structured: true,
-    model: resolveModel(options),
+    model: resolveModel(options, kind === "adversarial-review" ? ADVERSARIAL_REVIEW_MODEL : null),
     timeoutMs: resolveTimeoutMs(options, kind)
   });
   if (!run) {

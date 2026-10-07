@@ -11,6 +11,8 @@ import { pathToFileURL } from "node:url";
 import { normalizeArgv, parseArgs, splitRawArgumentString } from "../plugins/gemini/scripts/lib/args.mjs";
 import { escapeAtSigns, isSupportedGeminiVersion, restoreAtSigns } from "../plugins/gemini/scripts/lib/gemini.mjs";
 import { collectReviewContext, gitFilterOverrides, isSupportedGitVersion, resolveReviewTarget } from "../plugins/gemini/scripts/lib/git.mjs";
+import { buildReviewPrompt } from "../plugins/gemini/scripts/lib/prompts.mjs";
+import { renderNothingToReview } from "../plugins/gemini/scripts/lib/render.mjs";
 import { extractJsonObject, parseReview, refusedTools, stoppedAfterRefusal } from "../plugins/gemini/scripts/lib/review.mjs";
 import { argAfter, argsAfter, captures, companion, git, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
 
@@ -258,7 +260,9 @@ test("a filter set only in a submodule's config never runs", () => {
   const vendor = path.join(repo, "vendor");
   // The filter runs inside the submodule, so the marker lands in the parent.
   git(vendor, "config", "filter.vendor.clean", "echo vendor >> ../filter-ran.txt; cat");
-  fs.appendFileSync(path.join(vendor, "app.js"), "// dirty\n");
+  // The same size, so even git status has to read the file, through the filter.
+  const vendorApp = path.join(vendor, "app.js");
+  fs.writeFileSync(vendorApp, fs.readFileSync(vendorApp, "utf8").replace("average", "AVERAGE"));
   fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
   const marker = path.join(repo, "filter-ran.txt");
   // Control: git diff in the parent inspects the submodule and runs its filter.
@@ -269,6 +273,10 @@ test("a filter set only in a submodule's config never runs", () => {
   const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
   assert.equal(fs.existsSync(marker), false);
   assert.match(context.content, /\/\/ changed/);
+  // The review names the submodule it left out; checking it ran no filter.
+  assert.deepEqual(context.skippedSubmodules, [{ name: "vendor", files: 1 }]);
+  assert.match(context.content, /Submodules not reviewed[\s\S]*- vendor: 1 file\(s\) with uncommitted changes, not included in this review/);
+  assert.doesNotMatch(context.content, /AVERAGE/);
 
   // Also when .gitmodules, which Gemini may edit, asks git to inspect it.
   git(repo, "config", "-f", ".gitmodules", "submodule.vendor.ignore", "none");
@@ -278,6 +286,34 @@ test("a filter set only in a submodule's config never runs", () => {
   fs.rmSync(marker);
   collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
   assert.equal(fs.existsSync(marker), false);
+});
+
+test("changes only inside a submodule are named, not reviewed", () => {
+  const repo = makeRepo();
+  const origin = makeRepo();
+  git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", origin, "vendor");
+  git(repo, "commit", "-qm", "submodule");
+  const vendor = path.join(repo, "vendor");
+  fs.appendFileSync(path.join(vendor, "app.js"), "// dirty\n");
+  fs.writeFileSync(path.join(vendor, "new.js"), "// new\n");
+  git(vendor, "mv", "app.js", "renamed.js");
+
+  // auto picks the working tree, which then has nothing outside the submodule.
+  const target = resolveReviewTarget(repo);
+  assert.equal(target.mode, "working-tree");
+  const context = collectReviewContext(repo, target);
+  assert.equal(context.empty, true);
+  assert.equal(context.summary, "the working tree has no changes outside submodules");
+  // A rename counts once.
+  assert.deepEqual(context.skippedSubmodules, [{ name: "vendor", files: 2 }]);
+  const message = renderNothingToReview("Review", context);
+  assert.match(message, /Uncommitted changes inside submodule `vendor` are not part of this review/);
+  assert.match(message, /--cwd vendor/);
+  assert.match(buildReviewPrompt("review", context, ""), /not part of this review; do not judge or guess at them: vendor/);
+
+  // A review run from inside the submodule covers them.
+  const inside = collectReviewContext(vendor, resolveReviewTarget(vendor));
+  assert.match(inside.content, /\/\/ new/);
 });
 
 test("a filter passed down by a parent git never runs", () => {

@@ -189,7 +189,9 @@ export function resolveReviewTarget(cwd, { base, scope } = {}) {
   if (!["auto", "working-tree", "branch"].includes(requested)) {
     throw new Error(`Unsupported --scope "${requested}". Use auto, working-tree or branch, or pass --base <ref>.`);
   }
-  if (requested === "working-tree" || (requested === "auto" && getWorkingTreeState(cwd).isDirty)) {
+  // Changes inside submodules alone also pick the working tree, whose review
+  // then says it leaves them out.
+  if (requested === "working-tree" || (requested === "auto" && (getWorkingTreeState(cwd).isDirty || dirtySubmodules(cwd).length > 0))) {
     return { mode: "working-tree", label: "working tree diff" };
   }
   const detected = detectDefaultBranch(cwd);
@@ -472,8 +474,49 @@ function statusText(repoRoot, links, untrackedLinks) {
   return lines.join("\n");
 }
 
+// Submodules with uncommitted changes in their working trees, which reviews
+// leave out (see gitEnv), so a review can say what it skipped. Git runs inside
+// each one, under that submodule's own filter overrides, so its filters stay
+// off too. Submodules that are not checked out, or whose folder leads out of
+// the repository, are passed over; nested submodules are not checked.
+function dirtySubmodules(repoRoot) {
+  const realRoot = fs.realpathSync.native(repoRoot);
+  const dirty = [];
+  for (const entry of pathList(gitChecked(repoRoot, ["ls-files", "--stage", "-z"]))) {
+    const name = /^160000 [0-9a-f]+ \d\t([\s\S]+)$/.exec(entry)?.[1];
+    const folder = name ? path.join(repoRoot, name) : null;
+    if (!folder || !fs.existsSync(path.join(folder, ".git")) || !realPathInside(folder, realRoot)) {
+      continue;
+    }
+    try {
+      const entries = pathList(gitChecked(folder, ["status", "--porcelain=v1", "-z", "--untracked-files=all", NO_SUBMODULE_WORKTREES]));
+      let files = 0;
+      for (let index = 0; index < entries.length; index += 1) {
+        files += 1;
+        // A rename or copy is followed by the path it came from.
+        if (/[RC]/.test(entries[index].slice(0, 2))) {
+          index += 1;
+        }
+      }
+      if (files) {
+        dirty.push({ name, files });
+      }
+    } catch {
+      dirty.push({ name, files: null });
+    }
+  }
+  return dirty;
+}
+
+function describeSubmodules(submodules) {
+  return submodules
+    .map(({ name, files }) => `- ${name}: ${files == null ? "could not be checked" : `${files} file(s) with uncommitted changes`}, not included in this review`)
+    .join("\n");
+}
+
 function collectWorkingTree(repoRoot, budget) {
   const state = getWorkingTreeState(repoRoot);
+  const skippedSubmodules = dirtySubmodules(repoRoot);
   const leadsOut = new Map();
   const untrackedSplit = splitByLinks(repoRoot, state.untracked, leadsOut);
   const unstagedSplit = splitByLinks(repoRoot, state.unstaged, leadsOut);
@@ -481,7 +524,8 @@ function collectWorkingTree(repoRoot, budget) {
   const links = [...new Set([...untrackedSplit.links, ...unstagedSplit.links])].sort();
   const changedFiles = [...new Set([...state.staged, ...unstagedSplit.inside, ...untrackedFiles, ...links])].sort();
   if (changedFiles.length === 0) {
-    return { empty: true, changedFiles, summary: "the working tree is clean", content: "", truncatedFiles: [], lockfiles: [] };
+    const summary = skippedSubmodules.length ? "the working tree has no changes outside submodules" : "the working tree is clean";
+    return { empty: true, changedFiles, summary, content: "", truncatedFiles: [], lockfiles: [], skippedSubmodules };
   }
 
   const status = statusText(repoRoot, links, untrackedSplit.links);
@@ -504,10 +548,12 @@ function collectWorkingTree(repoRoot, budget) {
       section("Untracked files", untracked.text),
       ...(links.length
         ? [section("Links out of the repository", links.map((link) => `- ${link}: what lies behind this link is not shown`).join("\n"))]
-        : [])
+        : []),
+      ...(skippedSubmodules.length ? [section("Submodules not reviewed", describeSubmodules(skippedSubmodules))] : [])
     ].join("\n"),
     truncatedFiles: [...packed.truncated, ...untracked.skipped],
-    lockfiles: packed.lockfiles
+    lockfiles: packed.lockfiles,
+    skippedSubmodules
   };
 }
 
@@ -530,7 +576,8 @@ function collectBranch(repoRoot, baseRef, budget) {
     summary: `${changedFiles.length} file(s) changed since merge-base ${mergeBase.slice(0, 12)}`,
     content: [section("Commit log", log), section("Diff stat", stat), section("Branch diff", packed.sections[0])].join("\n"),
     truncatedFiles: packed.truncated,
-    lockfiles: packed.lockfiles
+    lockfiles: packed.lockfiles,
+    skippedSubmodules: []
   };
 }
 

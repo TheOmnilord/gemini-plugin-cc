@@ -39,7 +39,7 @@ Prioritize failures that are expensive, dangerous or hard to detect:
 {{WEB_RULE}}
 - Where the diff was cut short for a file, read that file before judging it.
 - Every finding must answer: what goes wrong, why this code path is exposed, how bad the impact is, and what concrete change reduces the risk.
-- Prefer one strong finding over several weak ones. If the change holds up, say so and return no findings. If a conclusion rests on an inference, say so and keep the confidence honest.
+- Prefer one strong finding over several weak ones. If the change holds up, say so and return no findings. If a conclusion rests on an inference, say so and keep the confidence honest. Being skeptical of the change does not make your own beliefs about tools, platforms or versions evidence: list them under assumptions.
 </method>
 
 {{OUTPUT_CONTRACT}}

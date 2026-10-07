@@ -214,7 +214,8 @@ process.stdin.on("end", async () => {
           line_start: 2,
           line_end: 3,
           confidence: 0.9,
-          recommendation: "Return 0 or throw for an empty list."
+          recommendation: "Return 0 or throw for an empty list.",
+          assumptions: ["Callers may pass an empty list."]
         }
       ],
       next_steps: ["Add a test for an empty list."]

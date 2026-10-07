@@ -66,7 +66,8 @@ export function normalizeReview(value) {
         lineStart,
         lineEnd: lineEnd && lineStart && lineEnd >= lineStart ? lineEnd : lineStart,
         confidence: Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : null,
-        recommendation: text(finding.recommendation)
+        recommendation: text(finding.recommendation),
+        assumptions: Array.isArray(finding.assumptions) ? finding.assumptions.map(text).filter(Boolean) : []
       };
     })
     .sort(

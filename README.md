@@ -48,6 +48,7 @@ Or inside Claude Code: `/plugin marketplace add TheOmnilord/gemini-plugin-cc`, t
 
 - Every command calls [`plugins/gemini/scripts/gemini-companion.mjs`](plugins/gemini/scripts/gemini-companion.mjs), which runs `agy -p "" --input-format stream-json --output-format stream-json` with the prompt on stdin and follows its event stream.
 - **Reviews** collect the git diff (staged, unstaged and untracked files, or the branch against its merge-base), inline it in the prompt, and ask Gemini for a verdict with findings. `agy` enforces the [review schema](plugins/gemini/schemas/review-output.schema.json), and the result is rendered as Markdown. The diff budget defaults to 600 KB. Lockfile diffs are summarized, and oversized files are cut with a note telling Gemini to read them itself. An untracked link (a symlink or junction) that leads out of the repository is named, but neither its target's files nor their names are put in the prompt.
+- **Unverified assumptions.** Gemini cannot run commands, so a finding can rest on what it believes about git, the platform or a library. Each finding lists such beliefs under **Unverified assumptions**, and a finding whose impact depends on one is not rated critical. When a critical or high finding lists any, Claude checks them with read-only means (the tool's source or documentation, or a command that changes nothing) and adds what it found after the review.
 - **A private `agy` profile.** Plugin runs use their own `agy` profile in the plugin's data folder, so your own `agy` settings, rules and MCP servers never apply to them, and the plugin's rules never touch yours. The sign-in comes from the system keyring, so signing in to `agy` once covers both.
 - **Safety.** Headless `agy` would approve file writes anywhere on disk, so the profile adds three layers:
   - The plugin's `gemini-cc` agent offers Gemini file reading and search, file edits and web tools, and no shell, browser or MCP tools.
@@ -57,6 +58,7 @@ Or inside Claude Code: `/plugin marketplace add TheOmnilord/gemini-plugin-cc`, t
   - Since 1.3.0, `agy` also checks file edits itself and ends a headless run that needs one. `--write` runs therefore start `agy` with `--mode accept-edits`, which approves edits inside the repository and still refuses the rest, after the guard has checked them. Other runs do not get it.
 - **Edits are code changes.** Within those limits, `--write` edits are ordinary changes to your repository: build scripts, package scripts, tests, CI files and a hooks folder set with `core.hooksPath` (such as Husky's `.husky`) run when you build, install, test, commit or push. The task result lists every file Gemini edited, including new and git-ignored files that `git diff` does not show; review them before you do any of that.
 - **Reviews run no repository code.** Git can run commands while it compares files: `core.fsmonitor`, and the clean filters a repository's `.gitattributes` selects, whose commands may be scripts Gemini edited. The plugin's own git calls switch both off, Git LFS's filter included, so a review of changed LFS-tracked files compares the pointer with the raw content. If your repository's git config includes a file from the working tree (`include.path`), that file is git configuration too and can set other commands the plugin cannot rule out, so do not include working-tree files from git config in repositories where you use `--write`.
+- **Submodules.** For the same reason, reviews leave out uncommitted changes inside submodules: git would inspect them with the submodule's own settings, filters included. The review names each submodule it left out. Run the review from inside the submodule (for example `--cwd vendor`) to review those changes, with the same protections. A change to the commit a submodule points at is still shown.
 - **Resume.** `--resume` continues the previous conversation with `agy --conversation <id>`. Each turn restates whether it may edit files, so a review can be followed by `/gemini:rescue --resume --write apply the top fix`.
 - Job records and logs are stored per repository in Claude Code's plugin data folder (`~/.claude/plugins/data/gemini-gemini-cc/`), next to the `agy` profile.
 
@@ -70,7 +72,7 @@ Reviews run without web access, so Gemini judges a change from the diff and the 
 
 ## Models
 
-The default is `gemini-3.8-flash-medium`. Pass `--model` to a command or set `GEMINI_COMPANION_MODEL` to change it:
+The default is `gemini-3.8-flash-medium`, except for `/gemini:adversarial-review`, which defaults to `pro` (`gemini-3.1-pro-high`): in trials on this plugin's own changes, Flash approved a diff in which Pro found a real problem. Pass `--model` to a command or set `GEMINI_COMPANION_MODEL` to change it for every command:
 
 | Alias | Model |
 | --- | --- |
@@ -114,7 +116,7 @@ How it differs:
 | Environment variable | Effect |
 | --- | --- |
 | `GEMINI_COMPANION_BACKEND` | `agy` (default) or `gemini-cli`. |
-| `GEMINI_COMPANION_MODEL` | Default model, as an alias or a model id. With the Gemini CLI, unset means its own default (auto routing). |
+| `GEMINI_COMPANION_MODEL` | Default model for every command, as an alias or a model id. Unset, adversarial reviews use `pro`; other commands use `gemini-3.8-flash-medium`, or with the Gemini CLI its own default (auto routing). |
 | `GEMINI_COMPANION_MAX_DIFF_KB` | Diff budget for reviews, in KB (default 600). |
 | `GEMINI_COMPANION_AGY` | Path to a specific `agy` executable. |
 | `GEMINI_COMPANION_CLI` | Path to a specific Gemini CLI entry script or executable. |
