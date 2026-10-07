@@ -108,10 +108,26 @@ export function getRepoRoot(cwd) {
   return root ? path.resolve(root) : null;
 }
 
+// Git reads the quoted 'key'='value' pairs gitEnv passes from 2.31 on; older
+// git stops every call with "unable to parse command-line config". Returns
+// null when the version cannot be read.
+export function isSupportedGitVersion(version) {
+  const match = /(\d+)\.(\d+)/.exec(String(version ?? ""));
+  if (!match) {
+    return null;
+  }
+  const [major, minor] = match.slice(1).map(Number);
+  return major > 2 || (major === 2 && minor >= 31);
+}
+
 export function requireRepoRoot(cwd) {
-  const probe = git(cwd, ["--version"]);
+  // Without gitEnv, which older git cannot parse.
+  const probe = runCommand("git", ["--version"], { cwd });
   if (probe.error) {
     throw new Error("git is not installed or not on PATH.");
+  }
+  if (isSupportedGitVersion(probe.stdout) === false) {
+    throw new Error(`Gemini reviews need git 2.31 or later; found ${probe.stdout.trim()}. Update git and try again.`);
   }
   const root = getRepoRoot(cwd);
   if (!root) {
