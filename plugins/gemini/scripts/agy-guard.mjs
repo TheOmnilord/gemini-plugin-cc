@@ -240,27 +240,33 @@ function protectedPlaces(file, roots) {
   return found;
 }
 
-// The folders a .git file points to, read without following anything remote.
+// The folders a .git file points to, read without following anything remote
+// (the caller has checked the .git itself). A .git that is a link to such a
+// file counts too; a relative gitdir is taken both from the .git's folder and
+// from the real file's, so either reading git uses is covered.
 function gitDirsOf(dotGit) {
   const dirs = [];
   try {
-    if (!fs.lstatSync(dotGit).isFile()) {
+    if (!fs.statSync(dotGit).isFile()) {
       return dirs;
     }
     const gitdir = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dotGit, "utf8"))?.[1];
     if (!gitdir) {
       return dirs;
     }
-    const resolved = path.resolve(path.dirname(dotGit), gitdir);
-    if (leadsToNetwork(resolved)) {
-      return dirs;
-    }
-    dirs.push(resolved);
-    const common = path.join(resolved, "commondir");
-    if (isEntry(common) && !leadsToNetwork(common)) {
-      const shared = path.resolve(resolved, fs.readFileSync(common, "utf8").trim());
-      if (!leadsToNetwork(shared)) {
-        dirs.push(shared);
+    const bases = new Set([path.dirname(dotGit), path.dirname(fs.realpathSync.native(dotGit))]);
+    for (const base of bases) {
+      const resolved = path.resolve(base, gitdir);
+      if (leadsToNetwork(resolved)) {
+        continue;
+      }
+      dirs.push(resolved);
+      const common = path.join(resolved, "commondir");
+      if (isEntry(common) && !leadsToNetwork(common)) {
+        const shared = path.resolve(resolved, fs.readFileSync(common, "utf8").trim());
+        if (!leadsToNetwork(shared)) {
+          dirs.push(shared);
+        }
       }
     }
   } catch {

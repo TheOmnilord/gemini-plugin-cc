@@ -34,45 +34,50 @@ const LOCKFILES = new Set([
 // Commands git could run while the plugin collects a review, before anyone
 // has seen the change: core.fsmonitor, and the clean filters a repository's
 // .gitattributes selects. Their commands can be, or call, files Gemini may
-// have edited, so the plugin's own git calls switch them off. A filter that
-// is only the installed git-lfs program stays on: Gemini cannot edit it, and
-// without it diffs of LFS files would compare pointers with raw content.
-const filterOverrides = new Map();
+// have edited (Git LFS too runs configured extension commands), so the
+// plugin's own git calls switch every filter off. Diffs of LFS-tracked files
+// then compare the pointer with the raw content. The overrides travel in
+// GIT_CONFIG_COUNT/KEY/VALUE, which keep key and value apart: a driver name
+// may contain "=", which -c would split on. Names are read NUL-separated.
+const filterSettings = new Map();
 export function gitFilterOverrides(cwd) {
   const key = path.resolve(cwd);
-  if (!filterOverrides.has(key)) {
-    const listed = runCommand("git", ["-c", "core.fsmonitor=false", "config", "--get-regexp", "^filter\\."], { cwd });
-    const drivers = new Map();
-    for (const line of listed.status === 0 ? listed.stdout.split(/\r?\n/) : []) {
-      // "filter.<name>.<setting> <value>"; the name may contain dots.
-      const space = line.indexOf(" ");
-      const key = space === -1 ? line : line.slice(0, space);
-      const value = space === -1 ? "" : line.slice(space + 1);
-      const match = /^filter\.(.+)\.([a-z]+)$/i.exec(key);
-      if (!match) {
-        continue;
+  if (!filterSettings.has(key)) {
+    const listed = runCommand("git", ["-c", "core.fsmonitor=false", "config", "-z", "--name-only", "--get-regexp", "^filter\\."], { cwd });
+    const drivers = new Set();
+    for (const name of listed.status === 0 ? listed.stdout.split("\0") : []) {
+      const match = /^filter\.([\s\S]+)\.[a-z]+$/i.exec(name);
+      if (match) {
+        drivers.add(match[1]);
       }
-      const [, name, setting] = match;
-      const commands = drivers.get(name) ?? [];
-      if (/^(clean|process)$/i.test(setting)) {
-        commands.push(value.trim());
-      }
-      drivers.set(name, commands);
     }
-    const overrides = [];
-    for (const [name, commands] of drivers) {
-      if (commands.length && commands.every((command) => /^git-lfs [\w %.-]+$/.test(command))) {
-        continue;
-      }
-      overrides.push("-c", `filter.${name}.clean=`, "-c", `filter.${name}.process=`, "-c", `filter.${name}.required=false`);
-    }
-    filterOverrides.set(key, overrides);
+    filterSettings.set(
+      key,
+      [...drivers].flatMap((driver) => [
+        [`filter.${driver}.clean`, ""],
+        [`filter.${driver}.process`, ""],
+        [`filter.${driver}.required`, "false"]
+      ])
+    );
   }
-  return filterOverrides.get(key);
+  return filterSettings.get(key);
+}
+
+// The environment for a git call: the caller's, plus the overrides above,
+// after any GIT_CONFIG_COUNT entries already set.
+function gitEnv(cwd) {
+  const settings = [["core.fsmonitor", "false"], ...gitFilterOverrides(cwd)];
+  const first = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? "", 10) || 0;
+  const env = { ...process.env, GIT_CONFIG_COUNT: String(first + settings.length) };
+  settings.forEach(([name, value], index) => {
+    env[`GIT_CONFIG_KEY_${first + index}`] = name;
+    env[`GIT_CONFIG_VALUE_${first + index}`] = value;
+  });
+  return env;
 }
 
 function git(cwd, args) {
-  return runCommand("git", ["-c", "core.quotepath=off", "-c", "core.fsmonitor=false", ...gitFilterOverrides(cwd), ...args], { cwd });
+  return runCommand("git", ["-c", "core.quotepath=off", "-c", "core.fsmonitor=false", ...args], { cwd, env: gitEnv(cwd) });
 }
 
 function gitChecked(cwd, args) {

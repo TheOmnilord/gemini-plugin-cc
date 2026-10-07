@@ -128,6 +128,21 @@ test("the git folder a .git file points to is protected", () => {
   // The pointer file itself.
   assert.equal(write("vendor/.git"), "deny");
   assert.equal(write("src/app.js"), "allow");
+
+  // A .git that is a link to a pointer file.
+  fs.mkdirSync(path.join(repo, "lib", "meta", "hooks"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "lib", "pointer"), "gitdir: meta\n");
+  let linked = false;
+  try {
+    fs.symlinkSync(path.join(repo, "lib", "pointer"), path.join(repo, "lib", ".git"), "file");
+    linked = true;
+  } catch {
+    // Links to files need extra rights on some Windows setups.
+  }
+  if (linked) {
+    assert.equal(write("lib/meta/hooks/pre-commit"), "deny");
+    assert.equal(write("lib/index.js"), "allow");
+  }
 });
 
 test("a protected folder that is a link is not edited through its target", () => {

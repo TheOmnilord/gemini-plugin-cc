@@ -208,31 +208,34 @@ test("collecting a review never runs a command set as core.fsmonitor", () => {
   assert.equal(fs.existsSync(marker), false);
 });
 
-test("collecting a review never runs a clean filter, except git-lfs", () => {
+test("collecting a review never runs a clean filter", () => {
   const repo = makeRepo();
-  fs.writeFileSync(path.join(repo, ".gitattributes"), "app.js filter=norm\n");
-  git(repo, "add", ".gitattributes");
+  fs.writeFileSync(path.join(repo, "notes.md"), "notes\n");
+  fs.writeFileSync(path.join(repo, ".gitattributes"), "app.js filter=norm\nnotes.md filter=x=y\n");
+  git(repo, "add", ".");
   git(repo, "commit", "-qm", "attributes");
-  // A filter whose command could be a script Gemini edited.
-  git(repo, "config", "filter.norm.clean", "echo ran >> filter-ran.txt; cat");
+  // Filters whose commands could be scripts Gemini edited: a plain one, one
+  // whose name contains "=", and one that looks like Git LFS on its first line.
+  git(repo, "config", "filter.norm.clean", "echo norm >> filter-ran.txt; cat");
   git(repo, "config", "filter.norm.required", "true");
-  git(repo, "config", "filter.lfs.clean", "git-lfs clean -- %f");
-  git(repo, "config", "filter.lfs.process", "git-lfs filter-process");
-  git(repo, "config", "filter.sneaky.clean", "git-lfs clean -- %f; node evil.js");
+  git(repo, "config", "filter.x=y.clean", "echo x=y >> filter-ran.txt; cat");
+  git(repo, "config", "filter.lfs.clean", "git-lfs clean -- %f\necho lfs >> filter-ran.txt");
   fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
-  // Control: plain git diff runs it.
+  fs.appendFileSync(path.join(repo, "notes.md"), "more\n");
+  // Control: plain git diff runs them.
   spawnSync("git", ["diff"], { cwd: repo, encoding: "utf8" });
   const marker = path.join(repo, "filter-ran.txt");
-  assert.ok(fs.existsSync(marker));
+  assert.match(fs.readFileSync(marker, "utf8"), /norm[\s\S]*x=y|x=y[\s\S]*norm/);
   fs.rmSync(marker);
 
   const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
   assert.equal(fs.existsSync(marker), false);
   assert.match(context.content, /\/\/ changed/);
-  const overrides = gitFilterOverrides(repo).join(" ");
-  assert.match(overrides, /filter\.norm\.clean= /);
-  assert.match(overrides, /filter\.sneaky\.clean= /);
-  assert.doesNotMatch(overrides, /filter\.lfs\./);
+  assert.match(context.content, /\+more/);
+  const keys = gitFilterOverrides(repo).map(([key]) => key);
+  for (const key of ["filter.norm.clean", "filter.x=y.clean", "filter.x=y.process", "filter.lfs.clean"]) {
+    assert.ok(keys.includes(key), key);
+  }
 });
 
 test("deleted files are still reviewed", () => {
