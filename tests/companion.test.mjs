@@ -1,6 +1,7 @@
 // Tests for the shared companion code and the opt-in Gemini CLI backend.
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -190,6 +191,21 @@ test("tracked files behind a folder replaced by a link are not diffed", () => {
   assert.doesNotMatch(context.content, /OUTSIDE-SECRET/);
   assert.match(context.content, /## Unstaged diff[\s\S]*\/\/ changed/);
   assert.match(context.content, /- docs: what lies behind this link is not shown/);
+});
+
+test("collecting a review never runs a command set as core.fsmonitor", () => {
+  const repo = makeRepo();
+  git(repo, "config", "core.fsmonitor", "echo ran > fsmonitor-ran.txt");
+  fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
+  // Control: plain git status runs it.
+  spawnSync("git", ["status"], { cwd: repo, encoding: "utf8" });
+  const marker = path.join(repo, "fsmonitor-ran.txt");
+  if (!fs.existsSync(marker)) {
+    return; // This git does not run fsmonitor commands here; nothing to prove.
+  }
+  fs.rmSync(marker);
+  collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.equal(fs.existsSync(marker), false);
 });
 
 test("deleted files are still reviewed", () => {
