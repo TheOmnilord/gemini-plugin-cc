@@ -12,7 +12,10 @@ export const DEFAULT_MAX_INLINE_BYTES = 600 * 1024;
 const MAX_UNTRACKED_FILE_BYTES = 64 * 1024;
 const MAX_UNTRACKED_TOTAL_BYTES = 192 * 1024;
 const MIN_FILE_SHARE_BYTES = 4 * 1024;
-const DIFF_FLAGS = ["--no-ext-diff", "--no-textconv", "--no-color", "--submodule=diff", "--find-renames"];
+// --ignore-submodules=dirty on every diff and status: see gitEnv. As a flag
+// it wins over a submodule's own "ignore" setting in .gitmodules.
+const NO_SUBMODULE_WORKTREES = "--ignore-submodules=dirty";
+const DIFF_FLAGS = ["--no-ext-diff", "--no-textconv", "--no-color", "--submodule=diff", "--find-renames", NO_SUBMODULE_WORKTREES];
 const LOCKFILES = new Set([
   "package-lock.json",
   "npm-shrinkwrap.json",
@@ -66,8 +69,9 @@ export function gitFilterOverrides(cwd) {
 // The environment for a git call: the caller's, plus the overrides above,
 // after any GIT_CONFIG_COUNT entries already set. Settings passed down by a
 // parent git (GIT_CONFIG_PARAMETERS) would be applied after these, so they
-// are dropped. Submodule working trees are not inspected: git does that in
-// a child process that reads the submodule's own filters, which these
+// are dropped. Submodule working trees are not inspected (here as a default,
+// and as --ignore-submodules=dirty on each diff and status): git does that
+// in a child process that reads the submodule's own filters, which these
 // overrides cannot name. Their commits still show.
 function gitEnv(cwd) {
   const settings = [["core.fsmonitor", "false"], ["diff.ignoreSubmodules", "dirty"], ...gitFilterOverrides(cwd)];
@@ -152,8 +156,8 @@ function pathList(text) {
 }
 
 export function getWorkingTreeState(cwd) {
-  const staged = pathList(gitChecked(cwd, ["diff", "--cached", "--name-only", "-z"]));
-  const unstaged = pathList(gitChecked(cwd, ["diff", "--name-only", "-z"]));
+  const staged = pathList(gitChecked(cwd, ["diff", "--cached", "--name-only", "-z", NO_SUBMODULE_WORKTREES]));
+  const unstaged = pathList(gitChecked(cwd, ["diff", "--name-only", "-z", NO_SUBMODULE_WORKTREES]));
   const untracked = pathList(gitChecked(cwd, ["ls-files", "--others", "--exclude-standard", "-z"]));
   return {
     staged,
@@ -437,7 +441,7 @@ function splitByLinks(repoRoot, files, leadsOut = new Map()) {
 // git status, one entry per line, without the entries behind the links.
 function statusText(repoRoot, links, untrackedLinks) {
   const behindLink = (file) => links.some((link) => file === link || file.startsWith(`${link}/`));
-  const entries = pathList(gitChecked(repoRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]));
+  const entries = pathList(gitChecked(repoRoot, ["status", "--porcelain=v1", "-z", "--untracked-files=all", NO_SUBMODULE_WORKTREES]));
   const lines = [];
   for (let index = 0; index < entries.length; index += 1) {
     const code = entries[index].slice(0, 2);

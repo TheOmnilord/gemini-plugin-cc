@@ -260,6 +260,15 @@ test("a filter set only in a submodule's config never runs", () => {
   const context = collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
   assert.equal(fs.existsSync(marker), false);
   assert.match(context.content, /\/\/ changed/);
+
+  // Also when .gitmodules, which Gemini may edit, asks git to inspect it.
+  git(repo, "config", "-f", ".gitmodules", "submodule.vendor.ignore", "none");
+  git(repo, "config", "submodule.vendor.ignore", "none");
+  spawnSync("git", ["diff", "--submodule=diff"], { cwd: repo, encoding: "utf8" });
+  assert.ok(fs.existsSync(marker));
+  fs.rmSync(marker);
+  collectReviewContext(repo, { mode: "working-tree", label: "working tree diff" });
+  assert.equal(fs.existsSync(marker), false);
 });
 
 test("a filter passed down by a parent git never runs", () => {
