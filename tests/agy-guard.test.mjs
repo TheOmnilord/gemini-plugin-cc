@@ -104,61 +104,10 @@ test("edits stay out of the agent settings that agy, the Gemini CLI and Claude C
   ]) {
     const result = write(file);
     assert.equal(result.decision, "deny", file);
-    assert.match(result.reason, /outside \.git, \.agents, \.gemini, \.claude, \.mcp\.json and git's hooks folder/);
+    assert.match(result.reason, /outside \.git, \.agents, \.gemini, \.claude and \.mcp\.json/);
   }
   assert.equal(write("docs/claude.md").decision, "allow");
   assert.equal(write("CLAUDE.md").decision, "allow");
-});
-
-test("edits stay out of the folder git runs hooks from, as git reports it", () => {
-  const git = (cwd, ...args) => {
-    const result = spawnSync("git", args, { cwd, encoding: "utf8" });
-    assert.equal(result.status, 0, result.stderr);
-    return result.stdout;
-  };
-  const repo = tempDir("guard-hookspath-");
-  git(repo, "init", "-q");
-  const write = (file, root = repo) =>
-    decide(
-      { conversationId: conversation, toolCall: { name: "write_to_file", args: { TargetFile: path.join(root, ...file.split("/")) } }, workspacePaths: [root] },
-      env({ GEMINI_CC_MODE: "write" })
-    ).decision;
-
-  // Husky points core.hooksPath at .husky; a hook planted there runs on the next commit.
-  git(repo, "config", "core.hooksPath", ".husky");
-  assert.equal(write(".husky/pre-commit"), "deny");
-  // On macOS and Windows another case names the same folder.
-  assert.equal(write(".Husky/pre-commit"), "deny");
-  assert.equal(write("src/app.js"), "allow");
-
-  // git's own syntax: a comment right after the value.
-  fs.appendFileSync(path.join(repo, ".git", "config"), "[core]\n\thooksPath = tools/hooks#shared\n");
-  assert.equal(write("tools/hooks/pre-push"), "deny");
-  assert.equal(write("tools/build.js"), "allow");
-
-  // Set in an included file.
-  git(repo, "config", "--unset-all", "core.hooksPath");
-  fs.writeFileSync(path.join(repo, "shared.gitconfig"), "[core]\n\thooksPath = ci/hooks\n");
-  git(repo, "config", "include.path", "../shared.gitconfig");
-  assert.equal(write("ci/hooks/pre-commit"), "deny");
-
-  // A nested repository's own setting.
-  const nested = path.join(repo, "vendor", "lib");
-  fs.mkdirSync(nested, { recursive: true });
-  git(nested, "init", "-q");
-  git(nested, "config", "core.hooksPath", ".githooks");
-  assert.equal(write("vendor/lib/.githooks/post-checkout"), "deny");
-  assert.equal(write("vendor/lib/index.js"), "allow");
-
-  // A linked worktree, whose .git is a file.
-  fs.writeFileSync(path.join(repo, "README.md"), "x\n");
-  git(repo, "add", "README.md");
-  git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-qm", "init");
-  const worktree = path.join(tempDir("guard-worktree-"), "wt");
-  git(repo, "worktree", "add", "-q", worktree);
-  assert.equal(fs.lstatSync(path.join(worktree, ".git")).isFile(), true);
-  assert.equal(write("ci/hooks/pre-commit", worktree), "deny");
-  assert.equal(write("src/app.js", worktree), "allow");
 });
 
 test("a protected folder that is a link is not edited through its target", () => {

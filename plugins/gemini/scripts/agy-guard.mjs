@@ -14,7 +14,6 @@
 // The companion copies this file next to the profile's hooks.json, so it must
 // stay self-contained: Node built-ins only.
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -107,63 +106,18 @@ function namesStream(file) {
   return resolved.slice(path.parse(resolved).root.length).includes(":");
 }
 
-// Folders and files whose contents run code the next time a tool works in the
-// repository: git's hooks (.git), and the agent settings that agy (.agents),
-// the Gemini CLI (.gemini) and Claude Code (.claude, .mcp.json) load from a
-// repository, which can hold hooks and MCP servers.
+// Folders and files whose contents run code before the user can review an
+// edit, or never show in the diff: git's own folder (.git, with its hooks),
+// and the agent settings that agy (.agents), the Gemini CLI (.gemini) and
+// Claude Code (.claude, .mcp.json) load from a repository on their next run,
+// which can hold hooks and MCP servers. Other files that run code, such as
+// package scripts or a hooks folder set with core.hooksPath, are ordinary
+// tracked files: their edits show in the diff and run only when the user
+// builds or commits.
 const PROTECTED_FOLDERS = new Set([".git", ".agents", ".gemini", ".claude", ".mcp.json"]);
 
-// The folders git runs hooks from, for the repository and every nested
-// repository on the way to a path, as git itself reports them: core.hooksPath
-// (Husky points it at .husky) with includes, worktrees and git's own syntax
-// taken into account. A .git that leads to a network path, or a worktree's
-// .git file whose gitdir does, is skipped unread, so git never contacts it.
-function hooksFolders(file, roots) {
-  const repositories = new Set();
-  for (const root of roots) {
-    const base = comparable(root);
-    const target = comparable(file);
-    if (!isInside(target, base)) {
-      continue;
-    }
-    let dir = base;
-    const folders = path.relative(base, target).split(path.sep).filter(Boolean).slice(0, -1);
-    for (const folder of ["", ...folders]) {
-      dir = folder ? path.join(dir, folder) : dir;
-      const dotGit = path.join(dir, ".git");
-      if (!isEntry(dotGit) || leadsToNetwork(dotGit)) {
-        continue;
-      }
-      let gitdir = null;
-      try {
-        if (fs.lstatSync(dotGit).isFile()) {
-          gitdir = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, "utf8"))?.[1]?.trim() ?? null;
-        }
-      } catch {
-        continue;
-      }
-      if (gitdir && leadsToNetwork(path.resolve(dir, gitdir))) {
-        continue;
-      }
-      repositories.add(dir);
-    }
-  }
-  const found = [];
-  for (const repository of repositories) {
-    const result = spawnSync("git", ["-C", repository, "rev-parse", "--git-path", "hooks"], { encoding: "utf8", timeout: 5000, windowsHide: true });
-    const hooks = result.status === 0 ? result.stdout.trim() : "";
-    if (hooks) {
-      const place = path.resolve(repository, hooks);
-      if (!leadsToNetwork(place)) {
-        found.push(place);
-      }
-    }
-  }
-  return found;
-}
-
 // insideAny for the places edits must stay out of, ignoring case on every
-// system: on macOS, and on Windows, .Husky and .husky are one folder.
+// system: on macOS, and on Windows, .Claude and .claude are one folder.
 function insideAnyFolded(file, places) {
   const real = realLocation(file);
   return (
@@ -395,12 +349,12 @@ export function decide(payload, env = process.env) {
       (file) =>
         !insideAny(file, workspaces) ||
         inProtectedFolder(file, workspaces) ||
-        insideAnyFolded(file, [...protectedPlaces(file, workspaces), ...hooksFolders(file, workspaces)]) ||
+        insideAnyFolded(file, protectedPlaces(file, workspaces)) ||
         namesStream(file)
     );
     return outside
       ? deny(
-          `Edits must stay inside the repository and outside .git, .agents, .gemini, .claude, .mcp.json and git's hooks folder: files there run code on the next run. Not allowed: ${outside}`
+          `Edits must stay inside the repository and outside .git, .agents, .gemini, .claude and .mcp.json: files there run code on the next run. Not allowed: ${outside}`
         )
       : allow();
   }

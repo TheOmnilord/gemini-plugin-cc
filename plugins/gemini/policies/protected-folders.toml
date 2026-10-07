@@ -10,9 +10,8 @@
 # argsPattern is matched against the call's arguments as JSON (with or
 # without spaces), where a Windows path separator appears as two
 # backslashes and a quote in a name as \"; a drive-relative path (C:.git)
-# counts too. It sees the path as
-# written: a link into one of these folders, and a hooks folder set with
-# git's core.hooksPath, are not caught here (agy's guard checks both).
+# counts too. It sees the path as written: a link into one of these folders
+# is not caught here (agy's guard checks where a path really leads).
 
 [[rule]]
 toolName = ["write_file", "replace", "edit", "edit_file", "smart_edit"]
