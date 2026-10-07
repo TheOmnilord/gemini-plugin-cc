@@ -12,7 +12,7 @@ Raw slash-command arguments:
 
 Core constraint:
 - This command is review-only. Do not fix issues, apply patches, or suggest that you are about to make changes.
-- Your only job is to run the review and return Gemini's output verbatim.
+- Your only job is to run the review and return Gemini's output verbatim, followed only by the assumptions check described below.
 
 Execution mode:
 - If the raw arguments include `--wait`, run in the foreground without asking.
@@ -40,7 +40,8 @@ Foreground flow:
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" review "--timeout-min 9 $ARGUMENTS"
 ```
-- Return the command's stdout verbatim. Do not paraphrase, summarize or add commentary before or after it, and do not fix anything it mentions.
+- Return the command's stdout verbatim. Do not paraphrase, summarize or add commentary before or inside it, and do not fix anything it mentions.
+- The one addition allowed comes after it: if a critical or high finding lists unverified assumptions, check them as the gemini-result-handling skill describes, then add a short section headed "Checking Gemini's assumptions" saying what you checked, what you found, and which assumptions stay unverified.
 
 Background flow:
 - Launch the review with the Bash tool in the background:

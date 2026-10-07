@@ -96,6 +96,9 @@ export function renderReview({ label, context, focus, review, answer, job, pages
   if (context.truncatedFiles.length) {
     lines.push(`> The diff was cut to fit the prompt for ${context.truncatedFiles.length} file(s); Gemini was told to read those files directly.`, "");
   }
+  if (context.skippedSubmodules?.length) {
+    lines.push(`> ${skippedSubmodulesNote(context.skippedSubmodules)}`, "");
+  }
 
   if (!review) {
     lines.push("Gemini did not return the structured review format, so its answer is shown as-is:", "", show(answer.trim()), "");
@@ -124,6 +127,9 @@ export function renderReview({ label, context, focus, review, answer, job, pages
         }
         if (finding.recommendation) {
           lines.push(`**Recommendation:** ${show(finding.recommendation)}`, "");
+        }
+        if (finding.assumptions?.length) {
+          lines.push("**Unverified assumptions:**", ...finding.assumptions.map((assumption) => `- ${show(assumption)}`), "");
         }
       });
     }
@@ -171,12 +177,20 @@ export function renderFailure({ title, failure, run, job, editedFiles = [] }) {
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
+// Reviews leave out uncommitted changes inside submodules; each submodule is
+// a repository of its own, so a review run from inside it covers them.
+function skippedSubmodulesNote(submodules) {
+  const names = submodules.map(({ name }) => `\`${name}\``).join(", ");
+  return `Uncommitted changes inside ${submodules.length === 1 ? "submodule" : "submodules"} ${names} are not part of this review. To review them, run the review from inside the submodule, for example with \`--cwd ${submodules[0].name}\`.`;
+}
+
 export function renderNothingToReview(label, context) {
   const hint =
     context.target.mode === "working-tree"
       ? "To review committed work instead, pass `--base <ref>` or `--scope branch`."
       : "To review uncommitted changes instead, use `--scope working-tree`.";
-  return `Nothing for a Gemini ${label.toLowerCase()}: ${context.summary} (${context.target.label}). ${hint}\n`;
+  const submodules = context.skippedSubmodules?.length ? ` ${skippedSubmodulesNote(context.skippedSubmodules)}` : "";
+  return `Nothing for a Gemini ${label.toLowerCase()}: ${context.summary} (${context.target.label}).${submodules} ${hint}\n`;
 }
 
 export function renderQueued(job) {

@@ -71,6 +71,11 @@ export function buildReviewPrompt(kind, context, focus, options = {}, web = {}) 
   if (context.lockfiles.length) {
     notes.push(`Note: lockfile diffs are summarized, not shown: ${context.lockfiles.join(", ")}`);
   }
+  if (context.skippedSubmodules?.length) {
+    notes.push(
+      `Note: uncommitted changes inside these submodules are not part of this review; do not judge or guess at them: ${context.skippedSubmodules.map(({ name }) => name).join(", ")}`
+    );
+  }
   return assemble(kind === "adversarial-review" ? "adversarial-review" : "review", {
     REPO_ROOT: context.repoRoot,
     BRANCH: context.branch,
