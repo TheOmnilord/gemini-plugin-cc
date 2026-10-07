@@ -475,15 +475,27 @@ function statusText(repoRoot, links, untrackedLinks) {
 // Submodules with uncommitted changes in their working trees, which reviews
 // leave out (see gitEnv), so a review can say what it skipped. Git runs inside
 // each one, under that submodule's own filter overrides, so its filters stay
-// off too. Submodules that are not checked out, or whose folder leads out of
-// the repository, are passed over; nested submodules are not checked.
+// off too. Submodules that are not checked out, whose folder leads out of the
+// repository, or whose git folder is on a network share are passed over;
+// nested submodules are not checked.
 function dirtySubmodules(repoRoot) {
   const realRoot = fs.realpathSync.native(repoRoot);
   const dirty = [];
   for (const entry of pathList(gitChecked(repoRoot, ["ls-files", "--stage", "-z"]))) {
     const name = /^160000 [0-9a-f]+ \d\t([\s\S]+)$/.exec(entry)?.[1];
     const folder = name ? path.join(repoRoot, name) : null;
-    if (!folder || !fs.existsSync(path.join(folder, ".git")) || !realPathInside(folder, realRoot)) {
+    // Where the folder and its .git lead is settled before anything inside
+    // them is opened: resolving a network path makes Windows contact it.
+    if (!folder || !realPathInside(folder, realRoot)) {
+      continue;
+    }
+    const dotGit = path.join(folder, ".git");
+    if (leadsToNetwork(dotGit) || !fs.existsSync(dotGit)) {
+      continue;
+    }
+    // A .git file names the real git folder, which git would open.
+    const gitdir = fs.statSync(dotGit).isFile() ? /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dotGit, "utf8"))?.[1] : null;
+    if (gitdir && leadsToNetwork(path.resolve(folder, gitdir))) {
       continue;
     }
     try {

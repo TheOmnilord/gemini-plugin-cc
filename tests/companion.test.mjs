@@ -155,6 +155,31 @@ test("an untracked link to a network share is named without being resolved", { s
   assert.match(context.content, /- share: what lies behind this link is not shown/);
 });
 
+test("a submodule folder or git folder on a network share is passed over unresolved", { skip: process.platform !== "win32" }, () => {
+  const repo = makeRepo();
+  const origin = makeRepo();
+  git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", origin, "vendor");
+  git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", origin, "lib");
+  git(repo, "commit", "-qm", "submodules");
+  fs.appendFileSync(path.join(repo, "lib", "app.js"), "// dirty\n");
+  fs.appendFileSync(path.join(repo, "vendor", "app.js"), "// dirty\n");
+  // vendor's folder becomes a link to a share; lib's .git file points at one.
+  fs.rmSync(path.join(repo, "vendor"), { recursive: true, force: true });
+  try {
+    fs.symlinkSync("\\\\attacker.example\\share", path.join(repo, "vendor"), "dir");
+  } catch {
+    return; // Creating symlinks needs extra rights on some Windows setups.
+  }
+  // Windows marks it hidden, which writeFileSync cannot overwrite.
+  fs.rmSync(path.join(repo, "lib", ".git"));
+  fs.writeFileSync(path.join(repo, "lib", ".git"), "gitdir: \\\\attacker.example\\share\\lib.git\n");
+  const started = Date.now();
+  const context = collectReviewContext(repo, { mode: "branch", baseRef: "HEAD", label: "branch diff against HEAD" });
+  // Resolving either would wait on the network; the check reads the links instead.
+  assert.ok(Date.now() - started < 5000);
+  assert.deepEqual(context.skippedSubmodules, []);
+});
+
 test("untracked links out of the repository are not read into the review", () => {
   const repo = makeRepo();
   const outside = tempDir("gemini-cc-outside-");
