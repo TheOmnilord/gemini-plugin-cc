@@ -76,6 +76,7 @@ function usage() {
     "  setup [--check] [--model <m>] [--json]",
     "  review [--base <ref>] [--scope auto|working-tree|branch] [--model <m>] [--max-diff-kb <n>] [--timeout-min <n>] [--context-url <url>]... [--allow-url <url>]... [focus]",
     "  adversarial-review [same options as review] [focus]",
+    "  review-size [same options as review] [--json]: what a review would cover, without running Gemini",
     "  ask [--resume-last|--fresh] [--model <m>] [--prompt-file <f>] [--timeout-min <n>] [--allow-url <url>]... [question | stdin]",
     "  task [--write] [--background] [--resume-last|--fresh] [--model <m>] [--prompt-file <f>] [--timeout-min <n>] [--allow-url <url>]... [request | stdin]",
     "  status [job-id] [--all] [--json]",
@@ -479,13 +480,35 @@ async function runLiveCheck(backend, launch, model) {
   }
 }
 
+const REVIEW_ARGS = {
+  valueOptions: ["base", "scope", "model", "cwd", "max-diff-kb", "timeout-min"],
+  listOptions: ["context-url", "allow-url"],
+  booleanOptions: ["json", "wait", "background"],
+  aliasMap: { C: "cwd", m: "model" }
+};
+
+// What a review with the same arguments would cover, so the review commands
+// can judge its size before asking whether to wait. It collects the diff with
+// the plugin's own git calls: plain git could run the repository's filters or
+// fsmonitor command before anyone has seen the change.
+function handleReviewSize(argv) {
+  const { options } = parseArgs(normalizeArgv(argv), REVIEW_ARGS);
+  const repoRoot = requireRepoRoot(resolveCwd(options));
+  const target = resolveReviewTarget(repoRoot, { base: options.base, scope: options.scope });
+  const context = collectReviewContext(repoRoot, target, { maxInlineBytes: resolveDiffBudget(options) });
+  const size = {
+    target: target.label,
+    mode: target.mode,
+    empty: context.empty,
+    summary: context.summary,
+    files: context.changedFiles.length,
+    diffKb: Math.ceil(Buffer.byteLength(context.content) / 1024)
+  };
+  write(options.json ? JSON.stringify(size, null, 2) : render.renderReviewSize(size));
+}
+
 async function handleReview(argv, kind) {
-  const { options, positionals } = parseArgs(normalizeArgv(argv), {
-    valueOptions: ["base", "scope", "model", "cwd", "max-diff-kb", "timeout-min"],
-    listOptions: ["context-url", "allow-url"],
-    booleanOptions: ["json", "wait", "background"],
-    aliasMap: { C: "cwd", m: "model" }
-  });
+  const { options, positionals } = parseArgs(normalizeArgv(argv), REVIEW_ARGS);
 
   const backend = getBackend();
   const contextUrls = normalizeUrls(options["context-url"], "--context-url");
@@ -806,6 +829,7 @@ const HANDLERS = {
   setup: handleSetup,
   review: (argv) => handleReview(argv, "review"),
   "adversarial-review": (argv) => handleReview(argv, "adversarial-review"),
+  "review-size": handleReviewSize,
   ask: (argv) => handleConsult(argv, "ask"),
   task: (argv) => handleConsult(argv, "task"),
   "run-job": handleRunJob,

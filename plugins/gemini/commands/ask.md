@@ -1,7 +1,7 @@
 ---
 description: Ask Gemini for an independent second opinion or a sparring round (read-only). --resume continues the last Gemini conversation, for example to push back on a review finding.
 argument-hint: '[--resume|--fresh] [--model <pro|flash|id>] [--allow-url <url>]... <question, plan or claim to challenge>'
-allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*)
+allowed-tools: Read, Glob, Grep, Bash(node:*)
 ---
 
 Get Gemini's independent view on the user's question.

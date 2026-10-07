@@ -2,7 +2,7 @@
 description: Run a Gemini review that challenges the implementation approach, design choices and assumptions
 argument-hint: '[--wait|--background] [--base <ref>] [--scope auto|working-tree|branch] [--model <pro|flash|id>] [--context-url <url>]... [--allow-url <url>]... [focus ...]'
 disable-model-invocation: true
-allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
+allowed-tools: Read, Glob, Grep, Bash(node:*), AskUserQuestion
 ---
 
 Run an adversarial Gemini review through the plugin's companion script. It is a challenge review that questions the chosen approach, design choices, tradeoffs and assumptions, not just a stricter hunt for bugs.
@@ -18,11 +18,12 @@ Core constraint:
 Execution mode:
 - If the raw arguments include `--wait`, run in the foreground without asking.
 - If they include `--background`, run in a Claude background task without asking.
-- Otherwise, estimate the size of the review first:
-  - Working-tree review: `git status --short --untracked-files=all`, `git diff --shortstat --cached` and `git diff --shortstat`.
-  - Branch review (`--base <ref>` or `--scope branch`): `git diff --shortstat <base>...HEAD`.
-  - Untracked files count as reviewable work even when `git diff --shortstat` is empty.
-  - Only conclude that there is nothing to review when the relevant scope really is empty.
+- Otherwise, estimate the size of the review first with the companion, which reads the changes the same way the review will:
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" review-size "$ARGUMENTS"
+```
+  - Do not run git yourself for this. Plain git commands such as `git status` and `git diff` can run commands the repository configures (filters selected by `.gitattributes`, an fsmonitor command), which may be scripts Gemini edited; the companion switches those off.
+  - If it reports nothing to review, or fails, run the foreground flow without asking: the review prints the same result or error.
   - Recommend waiting only for a clearly tiny review (about 1-2 files). In every other case, including when unsure, recommend background.
 - Then use `AskUserQuestion` exactly once with the options `Wait for results` and `Run in background`, recommended option first with ` (Recommended)` appended to its label.
 
