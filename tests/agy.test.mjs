@@ -223,6 +223,15 @@ test("an agy without --mode is not given it", () => {
   assert.ok(!captures(capture)[0].args.includes("--mode"));
 });
 
+test("a write task that fails still lists the files it edited", () => {
+  const repo = makeRepo();
+  const { env } = makeEnv({ FAKE_AGY_MODE: "write-then-quota" });
+  const result = companion(["task", "--write"], { cwd: repo, env, input: "Draft notes." });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /# Gemini Task \(write\) failed/);
+  assert.match(result.stdout, /\*\*Files Gemini edited before it stopped:\*\*\n- `notes\/draft\.md`/);
+});
+
 test("a read-only conversation can continue in write mode", () => {
   const repo = makeRepo();
   const { env, capture } = makeEnv();

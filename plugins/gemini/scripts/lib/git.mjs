@@ -31,8 +31,11 @@ const LOCKFILES = new Set([
   "flake.lock"
 ]);
 
+// core.fsmonitor names a command git runs to watch the working tree, and a
+// repository's config can take it from a file Gemini may have edited; the
+// plugin's own git calls never run it.
 function git(cwd, args) {
-  return runCommand("git", ["-c", "core.quotepath=off", ...args], { cwd });
+  return runCommand("git", ["-c", "core.quotepath=off", "-c", "core.fsmonitor=false", ...args], { cwd });
 }
 
 function gitChecked(cwd, args) {

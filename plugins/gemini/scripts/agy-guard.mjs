@@ -106,10 +106,32 @@ function namesStream(file) {
   return resolved.slice(path.parse(resolved).root.length).includes(":");
 }
 
-// Folders whose files run code the next time a tool works in the repository:
-// git's hooks, and the agent settings that agy (.agents) and the Gemini CLI
-// (.gemini) load from a repository, which can hold hooks and MCP servers.
-const PROTECTED_FOLDERS = new Set([".git", ".agents", ".gemini"]);
+// Folders and files whose contents run code before the user can review an
+// edit, or never show in the diff: git's own folder (.git, with its hooks),
+// and the agent settings that agy (.agents), the Gemini CLI (.gemini) and
+// Claude Code (.claude, .mcp.json) load from a repository on their next run,
+// which can hold hooks and MCP servers. Other files that run code, such as
+// package scripts or a hooks folder set with core.hooksPath, are ordinary
+// tracked files: their edits show in the diff and run only when the user
+// builds or commits.
+const PROTECTED_FOLDERS = new Set([".git", ".agents", ".gemini", ".claude", ".mcp.json"]);
+
+// insideAny for the places edits must stay out of, ignoring case on every
+// system: on macOS, and on Windows, .Claude and .claude are one folder.
+function insideAnyFolded(file, places) {
+  const real = realLocation(file);
+  return (
+    Boolean(real) &&
+    places.some((place) => {
+      const realPlace = realLocation(place);
+      if (!realPlace) {
+        return false;
+      }
+      const relative = path.relative(realPlace.toLowerCase(), real.toLowerCase());
+      return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+    })
+  );
+}
 
 // A Windows network path (\\server\share\...), or a device path that is not
 // a drive. Resolving one makes Windows contact that server, which could leak
@@ -325,9 +347,16 @@ export function decide(payload, env = process.env) {
     }
     const outside = targets.find(
       (file) =>
-        !insideAny(file, workspaces) || inProtectedFolder(file, workspaces) || insideAny(file, protectedPlaces(file, workspaces)) || namesStream(file)
+        !insideAny(file, workspaces) ||
+        inProtectedFolder(file, workspaces) ||
+        insideAnyFolded(file, protectedPlaces(file, workspaces)) ||
+        namesStream(file)
     );
-    return outside ? deny(`Edits must stay inside the repository and outside .git, .agents and .gemini. Not allowed: ${outside}`) : allow();
+    return outside
+      ? deny(
+          `Edits must stay inside the repository and outside .git, .agents, .gemini, .claude and .mcp.json: files there run code on the next run. Not allowed: ${outside}`
+        )
+      : allow();
   }
 
   // Opening a URL is allowed only for the exact addresses the user or Claude

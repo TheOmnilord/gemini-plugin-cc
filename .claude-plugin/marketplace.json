@@ -5,13 +5,13 @@
   },
   "metadata": {
     "description": "Use Google Gemini from Claude Code for code review, adversarial review, sparring and delegated tasks.",
-    "version": "0.3.10"
+    "version": "0.3.11"
   },
   "plugins": [
     {
       "name": "gemini",
       "description": "Use Google Gemini (through Google's Antigravity CLI, or the Gemini CLI) from Claude Code to review code, spar on designs, or delegate tasks.",
-      "version": "0.3.10",
+      "version": "0.3.11",
       "author": {
         "name": "TheOmnilord"
       },

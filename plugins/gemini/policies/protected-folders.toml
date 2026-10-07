@@ -1,20 +1,21 @@
 # Gemini CLI policy applied by the Claude Code gemini plugin to --write runs.
 # Files in these folders run code the next time a tool works in the
-# repository: git's hooks (.git), and the agent settings that agy (.agents)
-# and the Gemini CLI (.gemini) load from a repository, which can hold hooks
-# and MCP servers. Edits there are refused at any depth, in any case, also
-# in the spellings Windows reads as the same folder: with trailing dots or
-# spaces, as a stream (name:stream), and as an 8.3 short name (NAME~1), so
-# any path part that looks like a short name is refused.
+# repository: git's hooks (.git), and the agent settings that agy (.agents),
+# the Gemini CLI (.gemini) and Claude Code (.claude, .mcp.json) load from a
+# repository, which can hold hooks and MCP servers. Edits there are refused
+# at any depth, in any case, also in the spellings Windows reads as the same
+# name: with trailing dots or spaces, as a stream (name:stream), and as an
+# 8.3 short name (NAME~1), so any path part that looks like a short name is
+# refused.
 # argsPattern is matched against the call's arguments as JSON (with or
 # without spaces), where a Windows path separator appears as two
-# backslashes; a drive-relative path (C:.git) counts too. It sees the path as
-# written: a link into one of these folders is not caught here (agy's guard
-# checks where a path really leads).
+# backslashes and a quote in a name as \"; a drive-relative path (C:.git)
+# counts too. It sees the path as written: a link into one of these folders
+# is not caught here (agy's guard checks where a path really leads).
 
 [[rule]]
-toolName = ["write_file", "replace"]
-argsPattern = '"file_path"\s*:\s*"(?:[^"]*?(?:/|\\\\|:))?(?:\.(?:[Gg][Ii][Tt]|[Aa][Gg][Ee][Nn][Tt][Ss]|[Gg][Ee][Mm][Ii][Nn][Ii])[. ]*(?::[^"/\\\\]*)?|[^"/\\\\]*~[0-9][^"/\\\\]*)(?:/|\\\\|")'
+toolName = ["write_file", "replace", "edit", "edit_file", "smart_edit"]
+argsPattern = '"(?:file_path|absolute_path|path)"\s*:\s*"(?:(?:[^"\\]|\\.)*?(?:/|\\\\|:))?(?:\.(?:[Gg][Ii][Tt]|[Aa][Gg][Ee][Nn][Tt][Ss]|[Gg][Ee][Mm][Ii][Nn][Ii]|[Cc][Ll][Aa][Uu][Dd][Ee]|[Mm][Cc][Pp]\.[Jj][Ss][Oo][Nn])[. ]*(?::[^"/\\\\]*)?|[^"/\\\\]*~[0-9][^"/\\\\]*)(?:/|\\\\|")'
 decision = "deny"
 priority = 999
-denyMessage = "Edits must stay outside .git, .agents and .gemini: files there run code the next time a tool works in this repository."
+denyMessage = "Edits must stay outside .git, .agents, .gemini, .claude and .mcp.json: files there run code the next time a tool works in this repository."

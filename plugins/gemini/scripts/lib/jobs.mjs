@@ -149,10 +149,23 @@ function markCancelled(job) {
 }
 
 // Claims the job for this process and records it as running. Returns false,
-// without anything started, when another process claimed it first or a
-// cancel was requested.
+// without anything started, when another process claimed it first, a cancel
+// was requested, or the job is no longer waiting: its saved record is gone
+// (pruned after it finished), no longer queued, or past the start window,
+// after which status already shows it as never started. The caller's copy
+// may be stale, so the saved record decides.
 export function startJob(job, fields = {}) {
   if (!createMarker(jobFiles(job.workspaceRoot, job.id).started)) {
+    return false;
+  }
+  const saved = loadJob(job.workspaceRoot, job.id);
+  if (saved?.status !== "queued") {
+    return false;
+  }
+  if (!(Date.now() - Date.parse(saved.createdAt ?? "") <= NEVER_STARTED_AFTER_MS)) {
+    // Recorded as status already shows it, so it can be pruned like any finished job.
+    Object.assign(saved, { status: "failed", completedAt: nowIso(), errorMessage: "The Gemini job never started." });
+    saveJob(saved);
     return false;
   }
   Object.assign(job, fields, { status: "running", pid: process.pid, startedAt: nowIso() });

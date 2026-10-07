@@ -88,14 +88,26 @@ test("edits stay out of every .git, also in nested repositories", () => {
   }
 });
 
-test("edits stay out of the agent settings that agy and the Gemini CLI load", () => {
+test("edits stay out of the agent settings that agy, the Gemini CLI and Claude Code load", () => {
   const write = (file) => decide(call("write_to_file", { TargetFile: path.join(workspace, ...file.split("/")) }), env({ GEMINI_CC_MODE: "write" }));
   // Hooks or MCP servers planted there would run on the next run in this repository.
-  for (const file of [".agents/hooks.json", ".agents/mcp.json", "packages/app/.agents/rules.json", ".gemini/settings.json", "sub/.Gemini/settings.json"]) {
+  for (const file of [
+    ".agents/hooks.json",
+    ".agents/mcp.json",
+    "packages/app/.agents/rules.json",
+    ".gemini/settings.json",
+    "sub/.Gemini/settings.json",
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".mcp.json",
+    "tools/.mcp.json"
+  ]) {
     const result = write(file);
     assert.equal(result.decision, "deny", file);
-    assert.match(result.reason, /outside \.git, \.agents and \.gemini/);
+    assert.match(result.reason, /outside \.git, \.agents, \.gemini, \.claude and \.mcp\.json/);
   }
+  assert.equal(write("docs/claude.md").decision, "allow");
+  assert.equal(write("CLAUDE.md").decision, "allow");
 });
 
 test("a protected folder that is a link is not edited through its target", () => {
@@ -135,6 +147,21 @@ test("a protected folder that leads to a network share is not resolved", { skip:
   );
   assert.equal(result.decision, "allow");
   assert.ok(Date.now() - started < 3000);
+
+  // A .git that leads to a share, or a worktree .git file pointing there: git is not run on it.
+  const other = tempDir("guard-gitdir-unc-");
+  fs.symlinkSync("\\\\live-check.invalid\\share", path.join(other, ".git"), "dir");
+  const worktree = tempDir("guard-gitfile-unc-");
+  fs.writeFileSync(path.join(worktree, ".git"), "gitdir: \\\\live-check.invalid\\share\\repo\\.git\\worktrees\\wt\n");
+  for (const root of [other, worktree]) {
+    const begun = Date.now();
+    const decision = decide(
+      { conversationId: conversation, toolCall: { name: "write_to_file", args: { TargetFile: path.join(root, "app.js") } }, workspacePaths: [root] },
+      env({ GEMINI_CC_MODE: "write" })
+    ).decision;
+    assert.equal(decision, "allow", root);
+    assert.ok(Date.now() - begun < 3000, root);
+  }
 });
 
 test("network paths are refused before the file system is touched", { skip: process.platform !== "win32" }, () => {

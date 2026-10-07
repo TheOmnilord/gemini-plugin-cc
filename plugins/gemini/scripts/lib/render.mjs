@@ -149,7 +149,7 @@ export function renderConsult({ job, answer, editedFiles }) {
   return `${lines.join("\n")}\n`;
 }
 
-export function renderFailure({ title, failure, run, job }) {
+export function renderFailure({ title, failure, run, job, editedFiles = [] }) {
   const lines = [`# ${title} failed`, "", `**Reason:** ${failure.message}`];
   if (failure.hint) {
     lines.push(`**What to do:** ${failure.hint}`);
@@ -161,6 +161,9 @@ export function renderFailure({ title, failure, run, job }) {
   }
   if (run?.text?.trim()) {
     lines.push("Partial answer:", "", unescaper(job)(run.text.trim()), "");
+  }
+  if (editedFiles.length) {
+    lines.push(`**Files Gemini edited before it stopped:**\n${editedFiles.map((file) => `- \`${file}\``).join("\n")}`, "");
   }
   if (job?.logFile) {
     lines.push(`Log: \`${job.logFile}\``);

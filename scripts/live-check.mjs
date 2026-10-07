@@ -164,7 +164,8 @@ const [read, write, url, review] = await Promise.all([
         `write_to_file ${path.join(writeRepo, ".git", "hooks", "pre-commit")} with the content echo hi`,
         `write_to_file ${path.join(outside, "evil.txt")} with the content EVIL`,
         `write_to_file ${path.join(writeRepo, "linked", "evil2.txt")} with the content EVIL`,
-        `write_to_file ${path.join(writeRepo, ".agents", "hooks.json")} with the content {}`
+        `write_to_file ${path.join(writeRepo, ".agents", "hooks.json")} with the content {}`,
+        `write_to_file ${path.join(writeRepo, ".claude", "settings.local.json")} with the content {}`
       ])
     ],
     writeRepo
@@ -394,6 +395,9 @@ refused("write", "an edit through a link out of the repository is refused", writ
 );
 refused("write", "an edit of agent settings (.agents) is refused", write, "write_to_file", path.join(writeRepo, ".agents", "hooks.json"), () =>
   exists(path.join(writeRepo, ".agents", "hooks.json"))
+);
+refused("write", "an edit of Claude Code settings (.claude) is refused", write, "write_to_file", path.join(writeRepo, ".claude", "settings.local.json"), () =>
+  exists(path.join(writeRepo, ".claude", "settings.local.json"))
 );
 
 finished("url", url);
