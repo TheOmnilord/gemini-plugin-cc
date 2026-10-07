@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { plainFileLinks, resolveAgyModel } from "../plugins/gemini/scripts/lib/agy.mjs";
+import { newerGeminiModel, plainFileLinks, resolveAgyModel } from "../plugins/gemini/scripts/lib/agy.mjs";
 import { argAfter, captures, companion, companionAsync, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
 
 const FAKE_AGY = path.join(ROOT, "tests", "fixtures", "fake-agy.mjs");
@@ -26,6 +26,7 @@ function makeEnv(extra = {}) {
       GEMINI_COMPANION_AGY: FAKE_AGY,
       GEMINI_COMPANION_DATA: data,
       GEMINI_COMPANION_MODEL: "",
+      GEMINI_COMPANION_ADVERSARIAL_MODEL: "",
       FAKE_AGY_CAPTURE: path.join(data, "capture.jsonl"),
       CLAUDE_CODE_SESSION_ID: "test-session",
       ...extra
@@ -103,7 +104,11 @@ test("adversarial reviews default to Pro unless a model is named", () => {
     [["adversarial-review"], {}, "gemini-3.1-pro-high"],
     [["adversarial-review", "--model", "flash-low"], {}, "gemini-3.8-flash-low"],
     [["adversarial-review"], { GEMINI_COMPANION_MODEL: "flash" }, "gemini-3.8-flash-medium"],
-    [["review"], {}, "gemini-3.8-flash-medium"]
+    [["review"], {}, "gemini-3.8-flash-medium"],
+    // GEMINI_COMPANION_ADVERSARIAL_MODEL covers adversarial reviews only, ahead of GEMINI_COMPANION_MODEL.
+    [["adversarial-review"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high", GEMINI_COMPANION_MODEL: "flash" }, "gemini-3.8-flash-high"],
+    [["adversarial-review", "--model", "pro-low"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-3.1-pro-low"],
+    [["review"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-3.8-flash-medium"]
   ];
   for (const [args, extra, model] of runs) {
     const { env, capture } = makeEnv(extra);
@@ -318,11 +323,37 @@ test("setup reports agy, the sign-in and the models, and runs a live check", () 
   assert.doesNotMatch(text, /newer than/);
 });
 
+test("setup shows the adversarial-review model and newer models on the account", () => {
+  const setup = (extra) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv(extra).env }).stdout;
+  const today = setup({});
+  assert.match(today, /\*\*Adversarial reviews:\*\* `gemini-3\.1-pro-high` \(default: pro\)/);
+  assert.doesNotMatch(today, /Newer models|To try a newer model/);
+
+  const later = setup({ FAKE_AGY_EXTRA_MODELS: "gemini-4.0-pro-low,gemini-4.0-pro-high,gemini-3.10-flash-medium" });
+  assert.match(later, /\*\*Newer models on this account:\*\* `gemini-3\.10-flash-medium` \(newer than `gemini-3\.8-flash-medium`\), `gemini-4\.0-pro-high` \(newer than `gemini-3\.1-pro-high`\)/);
+  assert.match(later, /To try a newer model, pass `--model <model>`/);
+
+  const missing = setup({ GEMINI_COMPANION_ADVERSARIAL_MODEL: "gemini-9-pro-high" });
+  assert.match(missing, /\*\*Adversarial reviews:\*\* `gemini-9-pro-high` \(from GEMINI_COMPANION_ADVERSARIAL_MODEL\), not offered to this account/);
+  assert.match(missing, /does not offer `gemini-9-pro-high`, which adversarial reviews use/);
+  // Adversarial reviews alone do not make the plugin unready.
+  assert.match(missing, /\*\*Ready:\*\* yes/);
+});
+
+test("newer Gemini models are found by line and version", () => {
+  const account = ["gemini-3.8-flash-medium", "gemini-3.1-pro-high", "gemini-4.0-pro-low", "gemini-4.0-pro-high", "gemini-3.10-flash-low", "gemini-3.9-flash-lite", "claude-opus-5-5-high"];
+  assert.equal(newerGeminiModel("gemini-3.1-pro-high", account), "gemini-4.0-pro-high");
+  // 3.10 is newer than 3.8; flash-lite is another line; another effort is still offered.
+  assert.equal(newerGeminiModel("gemini-3.8-flash-medium", account), "gemini-3.10-flash-low");
+  assert.equal(newerGeminiModel("gemini-4.0-pro-high", account), null);
+  assert.equal(newerGeminiModel("claude-opus-5-5-high", account), null);
+});
+
 test("setup notes an agy newer than the last version checked", () => {
   const check = (version) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv({ FAKE_AGY_VERSION: version }).env }).stdout;
-  assert.match(check("1.3.1"), /\*\*Note:\*\* agy 1\.3\.1 is newer than 1\.3\.0, the last version this plugin was checked against/);
+  assert.match(check("1.3.2"), /\*\*Note:\*\* agy 1\.3\.2 is newer than 1\.3\.1, the last version this plugin was checked against/);
   assert.match(check("2.0.0"), /agy 2\.0\.0 is newer than/);
-  assert.doesNotMatch(check("1.3.0"), /newer than/);
+  assert.doesNotMatch(check("1.3.1"), /newer than/);
   assert.doesNotMatch(check("1.2.17"), /newer than/);
   // Compared as numbers, not as text.
   assert.doesNotMatch(check("0.10.0"), /newer than/);

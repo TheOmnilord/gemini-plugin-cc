@@ -249,6 +249,13 @@ function renderAgySetup(report) {
   const { requested, resolved, available } = report.model;
   const origin = !requested ? " (default)" : requested !== resolved ? ` (from \`${requested}\`)` : "";
   lines.push(`- **Model:** \`${resolved}\`${origin}${available === false ? ", not offered to this account" : ""}`);
+  const adversarial = report.adversarialModel;
+  lines.push(
+    `- **Adversarial reviews:** \`${adversarial.resolved}\` (${adversarialOrigin(adversarial)})${adversarial.available === false ? ", not offered to this account" : ""}`
+  );
+  if (report.newerModels.length) {
+    lines.push(`- **Newer models on this account:** ${report.newerModels.map(({ current, newer }) => `\`${newer}\` (newer than \`${current}\`)`).join(", ")}`);
+  }
   if (report.models.length) {
     lines.push(`- **Models on this account:** ${report.models.map((model) => `\`${model}\``).join(", ")}`);
   }
@@ -258,6 +265,10 @@ function renderAgySetup(report) {
   lines.push(`- **Plugin's agy profile:** \`${report.profile}\``);
   lines.push(`- **Job data:** \`${report.dataDir}\``);
   return setupTail(lines, report);
+}
+
+function adversarialOrigin({ requested, source }) {
+  return source ? `from ${source}` : `default: ${requested}`;
 }
 
 function renderGeminiCliSetup(report) {
@@ -277,6 +288,9 @@ function renderGeminiCliSetup(report) {
   }
   if (report.defaultModel) {
     lines.push(`- **Default model:** ${report.defaultModel} (from GEMINI_COMPANION_MODEL)`);
+  }
+  if (report.adversarialModel) {
+    lines.push(`- **Adversarial reviews:** ${report.adversarialModel.requested} (${adversarialOrigin(report.adversarialModel)})`);
   }
   lines.push(`- **Job data:** \`${report.dataDir}\``);
   for (const note of auth.notes ?? []) {
