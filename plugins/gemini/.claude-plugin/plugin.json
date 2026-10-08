@@ -1,6 +1,6 @@
 {
   "name": "gemini",
-  "version": "0.3.18",
+  "version": "0.3.19",
   "description": "Use Google Gemini (through Google's Antigravity CLI, or the Gemini CLI) from Claude Code to review code, spar on designs, or delegate tasks.",
   "author": {
     "name": "TheOmnilord"
