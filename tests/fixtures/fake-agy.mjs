@@ -14,7 +14,15 @@ const flag = (name) => {
   return index === -1 ? null : args[index + 1];
 };
 const mode = process.env.FAKE_AGY_MODE ?? "ok";
-const MODELS = ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "gemini-3.1-pro-high", "gemini-3.1-pro-low"];
+const MODELS = [
+  "gemini-3.8-flash-high",
+  "gemini-3.8-flash-medium",
+  "gemini-3.8-flash-low",
+  "gemini-3.1-pro-high",
+  "gemini-3.1-pro-low",
+  // Models a test adds, comma-separated, such as a newer release.
+  ...(process.env.FAKE_AGY_EXTRA_MODELS ?? "").split(",").filter(Boolean)
+];
 
 if (args.includes("--version")) {
   process.stdout.write(`${process.env.FAKE_AGY_VERSION ?? "1.2.11"}\n`);

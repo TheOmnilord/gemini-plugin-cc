@@ -19,6 +19,7 @@ import {
   getAgyVersion,
   isNewerThanChecked,
   listAgyModels,
+  newerGeminiModel,
   resolveAgyLaunch,
   resolveAgyModel
 } from "./lib/agy.mjs";
@@ -115,16 +116,29 @@ function workspaceRootFor(cwd) {
   return getRepoRoot(cwd) ?? path.resolve(cwd);
 }
 
-// fallback: the model when neither --model nor GEMINI_COMPANION_MODEL names
-// one; null leaves the choice to the backend.
-function resolveModel(options, fallback = null) {
-  const model = String(options.model ?? process.env.GEMINI_COMPANION_MODEL ?? "").trim();
-  return model || fallback;
-}
-
 // Adversarial reviews default to Pro: in trials on this plugin's own changes,
 // the Flash default approved a diff in which Pro found a real problem.
 const ADVERSARIAL_REVIEW_MODEL = "pro";
+
+// The model for a command: --model, then GEMINI_COMPANION_ADVERSARIAL_MODEL for
+// adversarial reviews, then GEMINI_COMPANION_MODEL, then Pro for adversarial
+// reviews. null leaves the choice to the backend.
+// Where the adversarial-review model comes from, for /gemini:setup; null when
+// it is the default.
+function adversarialModelSource() {
+  if (process.env.GEMINI_COMPANION_ADVERSARIAL_MODEL?.trim()) {
+    return "GEMINI_COMPANION_ADVERSARIAL_MODEL";
+  }
+  return process.env.GEMINI_COMPANION_MODEL?.trim() ? "GEMINI_COMPANION_MODEL" : null;
+}
+
+function resolveModel(options, kind = null) {
+  const adversarial = kind === "adversarial-review";
+  const named = [options.model, adversarial ? process.env.GEMINI_COMPANION_ADVERSARIAL_MODEL : null, process.env.GEMINI_COMPANION_MODEL]
+    .map((value) => String(value ?? "").trim())
+    .find(Boolean);
+  return named || (adversarial ? ADVERSARIAL_REVIEW_MODEL : null);
+}
 
 function resolveTimeoutMs(options, kind) {
   const raw = options["timeout-min"];
@@ -358,6 +372,13 @@ async function agySetupReport(backend, options) {
     signIn: null,
     models: [],
     model: { requested: requestedModel, resolved: resolveAgyModel(requestedModel), available: null },
+    adversarialModel: {
+      requested: resolveModel({}, "adversarial-review"),
+      resolved: resolveAgyModel(resolveModel({}, "adversarial-review")),
+      source: adversarialModelSource(),
+      available: null
+    },
+    newerModels: [],
     profile: agyProfileDir(),
     install: { command: AGY_INSTALL_COMMAND, shellCommand: AGY_INSTALL_SHELL_COMMAND },
     live: null,
@@ -371,6 +392,15 @@ async function agySetupReport(backend, options) {
     if (listing.ok) {
       report.models = listing.models.map((entry) => entry.slug);
       report.model.available = report.models.includes(report.model.resolved);
+      report.adversarialModel.available = report.models.includes(report.adversarialModel.resolved);
+      // The plugin's defaults change only with a plugin update; say when the
+      // account already offers something newer than a model in use.
+      for (const current of new Set([report.model.resolved, report.adversarialModel.resolved])) {
+        const newer = newerGeminiModel(current, report.models);
+        if (newer) {
+          report.newerModels.push({ current, newer });
+        }
+      }
     }
   }
   if (options.check && launch && report.signIn?.signedIn) {
@@ -392,6 +422,16 @@ async function agySetupReport(backend, options) {
   if (report.model.available === false) {
     report.nextSteps.push(
       `This account does not offer \`${report.model.resolved}\`. Pick a model from the list above and pass \`--model <model>\`, or set GEMINI_COMPANION_MODEL.`
+    );
+  }
+  if (report.adversarialModel.available === false && report.adversarialModel.resolved !== report.model.resolved) {
+    report.nextSteps.push(
+      `This account does not offer \`${report.adversarialModel.resolved}\`, which adversarial reviews use. Set GEMINI_COMPANION_ADVERSARIAL_MODEL to a model from the list above.`
+    );
+  }
+  if (report.newerModels.length) {
+    report.nextSteps.push(
+      "To try a newer model, pass `--model <model>`, or set GEMINI_COMPANION_MODEL (every command) or GEMINI_COMPANION_ADVERSARIAL_MODEL (adversarial reviews). The plugin's own defaults change only with a plugin update."
     );
   }
   if (report.live && !report.live.ok) {
@@ -419,6 +459,7 @@ async function geminiCliSetupReport(backend, options) {
     auth: getAuthStatus(),
     live: null,
     defaultModel: process.env.GEMINI_COMPANION_MODEL?.trim() || null,
+    adversarialModel: { requested: resolveModel({}, "adversarial-review"), source: adversarialModelSource() },
     dataDir: dataRoot(),
     nextSteps: []
   };
@@ -551,7 +592,7 @@ async function handleReview(argv, kind) {
     web: false,
     allowUrls,
     structured: true,
-    model: resolveModel(options, kind === "adversarial-review" ? ADVERSARIAL_REVIEW_MODEL : null),
+    model: resolveModel(options, kind),
     timeoutMs: resolveTimeoutMs(options, kind)
   });
   if (!run) {

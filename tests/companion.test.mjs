@@ -30,6 +30,7 @@ function makeEnv(extra = {}) {
       GEMINI_COMPANION_CLI: FAKE_GEMINI,
       GEMINI_COMPANION_DATA: data,
       GEMINI_COMPANION_MODEL: "",
+      GEMINI_COMPANION_ADVERSARIAL_MODEL: "",
       GEMINI_CLI_HOME: geminiHome,
       GEMINI_CLI_TRUST_WORKSPACE: "",
       FAKE_GEMINI_CAPTURE: path.join(data, "capture.jsonl"),

@@ -109,6 +109,38 @@ export function agyUnavailableError() {
   return new GeminiUnavailableError(AGY_MISSING_MESSAGE);
 }
 
+// Gemini models on an account that are newer versions of the same line
+// (flash, pro, ...) as a model in use, preferring the same effort suffix:
+// for gemini-3.1-pro-high, gemini-4.0-pro-high over gemini-4.0-pro-low.
+// Returns the newest such model, or null. The plugin never switches by itself:
+// a new model can follow the review format differently.
+const GEMINI_MODEL = /^gemini-(\d+(?:\.\d+)*)-([a-z-]+?)(?:-(high|medium|low))?$/;
+export function newerGeminiModel(current, available) {
+  const parse = (slug) => {
+    const match = GEMINI_MODEL.exec(String(slug));
+    return match ? { slug, version: match[1].split(".").map(Number), line: match[2], effort: match[3] ?? null } : null;
+  };
+  const compare = (a, b) => {
+    for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+      if ((a[index] ?? 0) !== (b[index] ?? 0)) {
+        return (a[index] ?? 0) - (b[index] ?? 0);
+      }
+    }
+    return 0;
+  };
+  const base = parse(current);
+  if (!base) {
+    return null;
+  }
+  const newer = available.map(parse).filter((model) => model && model.line === base.line && compare(model.version, base.version) > 0);
+  if (!newer.length) {
+    return null;
+  }
+  const top = newer.reduce((best, model) => (compare(model.version, best.version) > 0 ? model : best)).version;
+  const latest = newer.filter((model) => compare(model.version, top) === 0);
+  return (latest.find((model) => model.effort === base.effort) ?? latest[0]).slug;
+}
+
 export function resolveAgyModel(model) {
   const requested = String(model ?? "").trim();
   if (!requested) {
@@ -243,7 +275,7 @@ function lastLine(text) {
 // The newest agy whose behavior was checked live (npm run live-check in the
 // plugin's repository). agy updates itself, and 1.3.0 changed how it treats
 // file edits, so setup notes a newer version.
-export const AGY_CHECKED_VERSION = "1.3.0";
+export const AGY_CHECKED_VERSION = "1.3.1";
 
 function versionParts(version) {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""));
