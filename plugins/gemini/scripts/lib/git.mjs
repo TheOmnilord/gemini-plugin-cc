@@ -493,12 +493,14 @@ function dirtySubmodules(repoRoot) {
     if (leadsToNetwork(dotGit) || !fs.existsSync(dotGit)) {
       continue;
     }
-    // A .git file names the real git folder, which git would open.
-    const gitdir = fs.statSync(dotGit).isFile() ? /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dotGit, "utf8"))?.[1] : null;
-    if (gitdir && leadsToNetwork(path.resolve(folder, gitdir))) {
-      continue;
-    }
+    // A failure here, such as a .git file removed since the check above,
+    // marks this submodule as not checked instead of ending the review.
     try {
+      // A .git file names the real git folder, which git would open.
+      const gitdir = fs.statSync(dotGit).isFile() ? /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dotGit, "utf8"))?.[1] : null;
+      if (gitdir && leadsToNetwork(path.resolve(folder, gitdir))) {
+        continue;
+      }
       const entries = pathList(gitChecked(folder, ["status", "--porcelain=v1", "-z", "--untracked-files=all", NO_SUBMODULE_WORKTREES]));
       let files = 0;
       for (let index = 0; index < entries.length; index += 1) {
