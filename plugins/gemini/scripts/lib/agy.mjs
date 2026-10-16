@@ -47,8 +47,13 @@ export const MODEL_ALIASES = {
   "flash-high": "gemini-3.8-flash-high",
   "flash-low": "gemini-3.8-flash-low",
   "flash-lite": "gemini-3.8-flash-low",
-  pro: "gemini-3.1-pro-high",
-  "pro-low": "gemini-3.1-pro-low"
+  argon: "gemini-4-argon-high",
+  "argon-medium": "gemini-4-argon-medium",
+  "argon-low": "gemini-4-argon-low",
+  // Gemini 4 Argon replaced Gemini 3.1 Pro; pro keeps naming the top model, as
+  // it does in the Gemini CLI.
+  pro: "gemini-4-argon-high",
+  "pro-low": "gemini-4-argon-low"
 };
 const MODEL_PATTERN = /^[A-Za-z0-9._:/-]+$/;
 const SIGNED_OUT = /please sign in|not signed in|sign in to|signed out|login required|not logged in|unauthenticated|re-?authenticate/i;
@@ -110,8 +115,8 @@ export function agyUnavailableError() {
 }
 
 // Gemini models on an account that are newer versions of the same line
-// (flash, pro, ...) as a model in use, preferring the same effort suffix:
-// for gemini-3.1-pro-high, gemini-4.0-pro-high over gemini-4.0-pro-low.
+// (flash, argon, ...) as a model in use, preferring the same effort suffix:
+// for gemini-4-argon-high, gemini-4.1-argon-high over gemini-4.1-argon-low.
 // Returns the newest such model, or null. The plugin never switches by itself:
 // a new model can follow the review format differently.
 const GEMINI_MODEL = /^gemini-(\d+(?:\.\d+)*)-([a-z-]+?)(?:-(high|medium|low))?$/;

@@ -45,7 +45,8 @@ function conversationOf(repo, env, kind) {
 
 test("maps model aliases to agy models", () => {
   assert.equal(resolveAgyModel(""), "gemini-3.8-flash-medium");
-  assert.equal(resolveAgyModel("pro"), "gemini-3.1-pro-high");
+  assert.equal(resolveAgyModel("pro"), "gemini-4-argon-high");
+  assert.equal(resolveAgyModel("argon-medium"), "gemini-4-argon-medium");
   assert.equal(resolveAgyModel("flash-lite"), "gemini-3.8-flash-low");
   assert.equal(resolveAgyModel("gemini-3.7-flash-high"), "gemini-3.7-flash-high");
 });
@@ -101,13 +102,13 @@ test("adversarial reviews default to Pro unless a model is named", () => {
   const repo = makeRepo();
   fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
   const runs = [
-    [["adversarial-review"], {}, "gemini-3.1-pro-high"],
+    [["adversarial-review"], {}, "gemini-4-argon-high"],
     [["adversarial-review", "--model", "flash-low"], {}, "gemini-3.8-flash-low"],
     [["adversarial-review"], { GEMINI_COMPANION_MODEL: "flash" }, "gemini-3.8-flash-medium"],
     [["review"], {}, "gemini-3.8-flash-medium"],
     // GEMINI_COMPANION_ADVERSARIAL_MODEL covers adversarial reviews only, ahead of GEMINI_COMPANION_MODEL.
     [["adversarial-review"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high", GEMINI_COMPANION_MODEL: "flash" }, "gemini-3.8-flash-high"],
-    [["adversarial-review", "--model", "pro-low"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-3.1-pro-low"],
+    [["adversarial-review", "--model", "pro-low"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-4-argon-low"],
     [["review"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-3.8-flash-medium"]
   ];
   for (const [args, extra, model] of runs) {
@@ -231,7 +232,7 @@ test("task --write lets agy edit, lists the files and cleans up file links", () 
 
   const [call] = captures(capture);
   assert.equal(call.env.mode, "write");
-  assert.equal(argAfter(call.args, "--model"), "gemini-3.1-pro-high");
+  assert.equal(argAfter(call.args, "--model"), "gemini-4-argon-high");
   assert.equal(argAfter(call.args, "--json-schema"), null);
   // agy 1.3 checks edits itself; accept-edits lets those inside the workspace through.
   assert.equal(argAfter(call.args, "--mode"), "accept-edits");
@@ -326,11 +327,11 @@ test("setup reports agy, the sign-in and the models, and runs a live check", () 
 test("setup shows the adversarial-review model and newer models on the account", () => {
   const setup = (extra) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv(extra).env }).stdout;
   const today = setup({});
-  assert.match(today, /\*\*Adversarial reviews:\*\* `gemini-3\.1-pro-high` \(default: pro\)/);
+  assert.match(today, /\*\*Adversarial reviews:\*\* `gemini-4-argon-high` \(default: pro\)/);
   assert.doesNotMatch(today, /Newer models|To try a newer model/);
 
-  const later = setup({ FAKE_AGY_EXTRA_MODELS: "gemini-4.0-pro-low,gemini-4.0-pro-high,gemini-3.10-flash-medium" });
-  assert.match(later, /\*\*Newer models on this account:\*\* `gemini-3\.10-flash-medium` \(newer than `gemini-3\.8-flash-medium`\), `gemini-4\.0-pro-high` \(newer than `gemini-3\.1-pro-high`\)/);
+  const later = setup({ FAKE_AGY_EXTRA_MODELS: "gemini-4.1-argon-low,gemini-4.1-argon-high,gemini-3.10-flash-medium" });
+  assert.match(later, /\*\*Newer models on this account:\*\* `gemini-3\.10-flash-medium` \(newer than `gemini-3\.8-flash-medium`\), `gemini-4\.1-argon-high` \(newer than `gemini-4-argon-high`\)/);
   assert.match(later, /To try a newer model, pass `--model <model>`/);
 
   const missing = setup({ GEMINI_COMPANION_ADVERSARIAL_MODEL: "gemini-9-pro-high" });
@@ -341,11 +342,12 @@ test("setup shows the adversarial-review model and newer models on the account",
 });
 
 test("newer Gemini models are found by line and version", () => {
-  const account = ["gemini-3.8-flash-medium", "gemini-3.1-pro-high", "gemini-4.0-pro-low", "gemini-4.0-pro-high", "gemini-3.10-flash-low", "gemini-3.9-flash-lite", "claude-opus-5-5-high"];
-  assert.equal(newerGeminiModel("gemini-3.1-pro-high", account), "gemini-4.0-pro-high");
+  const account = ["gemini-3.8-flash-medium", "gemini-4-argon-high", "gemini-4.1-argon-low", "gemini-4.1-argon-high", "gemini-3.10-flash-low", "gemini-3.9-flash-lite", "claude-opus-5-5-high"];
+  // 4.1 is newer than 4.
+  assert.equal(newerGeminiModel("gemini-4-argon-high", account), "gemini-4.1-argon-high");
   // 3.10 is newer than 3.8; flash-lite is another line; another effort is still offered.
   assert.equal(newerGeminiModel("gemini-3.8-flash-medium", account), "gemini-3.10-flash-low");
-  assert.equal(newerGeminiModel("gemini-4.0-pro-high", account), null);
+  assert.equal(newerGeminiModel("gemini-4.1-argon-high", account), null);
   assert.equal(newerGeminiModel("claude-opus-5-5-high", account), null);
 });
 

@@ -18,8 +18,9 @@ const MODELS = [
   "gemini-3.8-flash-high",
   "gemini-3.8-flash-medium",
   "gemini-3.8-flash-low",
-  "gemini-3.1-pro-high",
-  "gemini-3.1-pro-low",
+  "gemini-4-argon-high",
+  "gemini-4-argon-medium",
+  "gemini-4-argon-low",
   // Models a test adds, comma-separated, such as a newer release.
   ...(process.env.FAKE_AGY_EXTRA_MODELS ?? "").split(",").filter(Boolean)
 ];

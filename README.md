@@ -72,18 +72,20 @@ Reviews run without web access, so Gemini judges a change from the diff and the 
 
 ## Models
 
-The default is `gemini-3.8-flash-medium`, except for `/gemini:adversarial-review`, which defaults to `pro` (`gemini-3.1-pro-high`): in trials on this plugin's own changes, Flash approved a diff in which Pro found a real problem. Pass `--model` to a command, set `GEMINI_COMPANION_MODEL` to change it for every command, or set `GEMINI_COMPANION_ADVERSARIAL_MODEL` to change it for adversarial reviews only:
+The default is `gemini-3.8-flash-medium`, except for `/gemini:adversarial-review`, which defaults to `pro` (`gemini-4-argon-high`): in trials on this plugin's own changes, Flash approved a diff in which Gemini 3.1 Pro, the model Gemini 4 Argon replaced, found a real problem. Pass `--model` to a command, set `GEMINI_COMPANION_MODEL` to change it for every command, or set `GEMINI_COMPANION_ADVERSARIAL_MODEL` to change it for adversarial reviews only:
 
 | Alias | Model |
 | --- | --- |
 | `flash`, `auto` | `gemini-3.8-flash-medium` |
 | `flash-high`, `flash-low` | `gemini-3.8-flash-high`, `gemini-3.8-flash-low` |
 | `flash-lite` | `gemini-3.8-flash-low` |
-| `pro`, `pro-low` | `gemini-3.1-pro-high`, `gemini-3.1-pro-low` |
+| `pro`, `argon` | `gemini-4-argon-high` |
+| `argon-medium` | `gemini-4-argon-medium` |
+| `pro-low`, `argon-low` | `gemini-4-argon-low` |
 
 Any other model id from `agy models` works too; `/gemini:setup` lists the models your account offers.
 
-The defaults and aliases name fixed models, so a new Gemini release is not used until a plugin update moves them: a new model can follow the review format differently. `/gemini:setup` names any newer flash or pro model your account offers than the ones in use, and you can use one right away by its id. With the Gemini CLI, `pro` and `flash` are the CLI's own aliases and follow its updates.
+The defaults and aliases name fixed models, so a new Gemini release is not used until a plugin update moves them: a new model can follow the review format differently. `/gemini:setup` names any newer flash or argon model your account offers than the ones in use, and you can use one right away by its id. With the Gemini CLI, `pro` and `flash` are the CLI's own aliases and follow its updates; the `argon` aliases are for the Antigravity CLI only.
 
 ## Gemini CLI backend (opt-in)
 

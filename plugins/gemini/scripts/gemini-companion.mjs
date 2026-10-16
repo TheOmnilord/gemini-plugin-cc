@@ -85,7 +85,7 @@ function usage() {
     "  cancel [job-id] [--json]",
     "  resume-candidate [--json]",
     "",
-    "Common: --cwd <dir> (-C). Models: pro, flash, flash-lite, auto or a full model id (/gemini:setup lists them).",
+    "Common: --cwd <dir> (-C). Models: pro, argon, flash, flash-lite, auto or a full model id (/gemini:setup lists them).",
     "Backend: Antigravity CLI (agy) by default; GEMINI_COMPANION_BACKEND=gemini-cli selects the Gemini CLI."
   ].join("\n");
 }
@@ -116,8 +116,9 @@ function workspaceRootFor(cwd) {
   return getRepoRoot(cwd) ?? path.resolve(cwd);
 }
 
-// Adversarial reviews default to Pro: in trials on this plugin's own changes,
-// the Flash default approved a diff in which Pro found a real problem.
+// Adversarial reviews default to pro (Gemini 4 Argon with agy): in trials on
+// this plugin's own changes, the Flash default approved a diff in which
+// Gemini 3.1 Pro, the model Argon replaced, found a real problem.
 const ADVERSARIAL_REVIEW_MODEL = "pro";
 
 // The model for a command: --model, then GEMINI_COMPANION_ADVERSARIAL_MODEL for
