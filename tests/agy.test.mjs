@@ -353,8 +353,9 @@ test("newer Gemini models are found by line and version", () => {
 
 test("setup notes an agy newer than the last version checked", () => {
   const check = (version) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv({ FAKE_AGY_VERSION: version }).env }).stdout;
-  assert.match(check("1.3.2"), /\*\*Note:\*\* agy 1\.3\.2 is newer than 1\.3\.1, the last version this plugin was checked against/);
+  assert.match(check("1.4.1"), /\*\*Note:\*\* agy 1\.4\.1 is newer than 1\.4\.0, the last version this plugin was checked against/);
   assert.match(check("2.0.0"), /agy 2\.0\.0 is newer than/);
+  assert.doesNotMatch(check("1.4.0"), /newer than/);
   assert.doesNotMatch(check("1.3.1"), /newer than/);
   assert.doesNotMatch(check("1.2.17"), /newer than/);
   // Compared as numbers, not as text.
