@@ -116,9 +116,10 @@ function workspaceRootFor(cwd) {
   return getRepoRoot(cwd) ?? path.resolve(cwd);
 }
 
-// Adversarial reviews default to pro (Gemini 4 Argon with agy): in trials on
-// this plugin's own changes, the Flash default approved a diff in which
-// Gemini 3.1 Pro, the model Argon replaced, found a real problem.
+// Adversarial reviews default to pro: in trials on this plugin's own changes,
+// Flash approved a diff in which Gemini 3.1 Pro, the model Argon replaced,
+// found a real problem. With agy, pro is gemini-4-argon-high, the default for
+// every command anyway; with the Gemini CLI it picks Pro over auto routing.
 const ADVERSARIAL_REVIEW_MODEL = "pro";
 
 // The model for a command: --model, then GEMINI_COMPANION_ADVERSARIAL_MODEL for

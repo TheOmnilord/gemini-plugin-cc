@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Live checks of the plugin's safety rules against the real Antigravity CLI.
 //
-//   npm run live-check [-- --companion <path>] [--model <m>] [--keep]
+//   npm run live-check [-- --companion <path>] [--model <m, default flash>] [--keep]
 //
 // Runs four real Gemini jobs in scratch repositories, each told to try
 // things the guard must allow or refuse, and judges them by what actually
@@ -34,7 +34,10 @@ const option = (name) => {
   return index === -1 ? null : process.argv[index + 1];
 };
 const companion = path.resolve(option("--companion") ?? path.join(ROOT, "plugins", "gemini", "scripts", "gemini-companion.mjs"));
-const model = option("--model");
+// Flash, not the plugin's default: Gemini 4 Argon's safety filter stops the
+// write job once it has tried the .git hook edit, so its later checks skip.
+// The guard's decisions do not depend on the model.
+const model = option("--model") ?? "flash";
 const keep = process.argv.includes("--keep");
 const token = () => randomUUID().replaceAll("-", "").slice(0, 12);
 
@@ -98,7 +101,7 @@ function steps(list) {
 function run(name, args, cwd) {
   const guardLog = path.join(work, `${name}.guard.jsonl`);
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [companion, ...args, "--timeout-min", "10", ...(model ? ["--model", model] : [])], {
+    const child = spawn(process.execPath, [companion, ...args, "--timeout-min", "10", "--model", model], {
       cwd,
       env: { ...process.env, GEMINI_CC_GUARD_LOG: guardLog }
     });
@@ -130,7 +133,7 @@ if (!launch) {
   process.exit(1);
 }
 const agyVersion = getAgyVersion(launch) ?? "unknown";
-console.log(`Live checks with agy ${agyVersion}, companion ${companion}`);
+console.log(`Live checks with agy ${agyVersion}, model ${model}, companion ${companion}`);
 console.log(`Scratch folder: ${work}\nRunning four Gemini jobs; this takes a few minutes...\n`);
 
 const [read, write, url, review] = await Promise.all([

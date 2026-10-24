@@ -30,7 +30,7 @@ import { GeminiUnavailableError } from "./gemini.mjs";
 import { dataRoot } from "./jobs.mjs";
 import { killProcessTree, runCommand } from "./proc.mjs";
 
-export const DEFAULT_AGY_MODEL = "gemini-3.8-flash-medium";
+export const DEFAULT_AGY_MODEL = "gemini-4-argon-high";
 export const AGY_INSTALL_COMMAND =
   process.platform === "win32"
     ? "irm https://antigravity.google/cli/install.ps1 | iex"
@@ -280,7 +280,7 @@ function lastLine(text) {
 // The newest agy whose behavior was checked live (npm run live-check in the
 // plugin's repository). agy updates itself, and 1.3.0 changed how it treats
 // file edits, so setup notes a newer version.
-export const AGY_CHECKED_VERSION = "1.4.0";
+export const AGY_CHECKED_VERSION = "1.4.7";
 
 function versionParts(version) {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""));
