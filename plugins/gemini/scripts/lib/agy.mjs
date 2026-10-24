@@ -30,7 +30,7 @@ import { GeminiUnavailableError } from "./gemini.mjs";
 import { dataRoot } from "./jobs.mjs";
 import { killProcessTree, runCommand } from "./proc.mjs";
 
-export const DEFAULT_AGY_MODEL = "gemini-3.8-flash-medium";
+export const DEFAULT_AGY_MODEL = "gemini-4-argon-high";
 export const AGY_INSTALL_COMMAND =
   process.platform === "win32"
     ? "irm https://antigravity.google/cli/install.ps1 | iex"

@@ -72,14 +72,14 @@ Reviews run without web access, so Gemini judges a change from the diff and the 
 
 ## Models
 
-The default is `gemini-3.8-flash-medium`, except for `/gemini:adversarial-review`, which defaults to `pro` (`gemini-4-argon-high`): in trials on this plugin's own changes, Flash approved a diff in which Gemini 3.1 Pro, the model Gemini 4 Argon replaced, found a real problem. Pass `--model` to a command, set `GEMINI_COMPANION_MODEL` to change it for every command, or set `GEMINI_COMPANION_ADVERSARIAL_MODEL` to change it for adversarial reviews only:
+The default is `gemini-4-argon-high` for every command, `/gemini:adversarial-review` included. Flash is faster and lighter on your quota, but in trials on this plugin's own changes it approved a diff in which Gemini 3.1 Pro, the model Gemini 4 Argon replaced, found a real problem. Pass `--model` to a command, set `GEMINI_COMPANION_MODEL` to change it for every command, or set `GEMINI_COMPANION_ADVERSARIAL_MODEL` to change it for adversarial reviews only:
 
 | Alias | Model |
 | --- | --- |
-| `flash`, `auto` | `gemini-3.8-flash-medium` |
+| `pro`, `argon`, `auto` | `gemini-4-argon-high` |
+| `flash` | `gemini-3.8-flash-medium` |
 | `flash-high`, `flash-low` | `gemini-3.8-flash-high`, `gemini-3.8-flash-low` |
 | `flash-lite` | `gemini-3.8-flash-low` |
-| `pro`, `argon` | `gemini-4-argon-high` |
 | `argon-medium` | `gemini-4-argon-medium` |
 | `pro-low`, `argon-low` | `gemini-4-argon-low` |
 
@@ -120,7 +120,7 @@ How it differs:
 | Environment variable | Effect |
 | --- | --- |
 | `GEMINI_COMPANION_BACKEND` | `agy` (default) or `gemini-cli`. |
-| `GEMINI_COMPANION_MODEL` | Default model for every command, as an alias or a model id. Unset, adversarial reviews use `pro`; other commands use `gemini-3.8-flash-medium`, or with the Gemini CLI its own default (auto routing). |
+| `GEMINI_COMPANION_MODEL` | Default model for every command, as an alias or a model id. Unset, every command uses `gemini-4-argon-high`; with the Gemini CLI, adversarial reviews use `pro` and other commands the CLI's own default (auto routing). |
 | `GEMINI_COMPANION_ADVERSARIAL_MODEL` | Model for adversarial reviews, ahead of `GEMINI_COMPANION_MODEL`. Unset, they use `GEMINI_COMPANION_MODEL`, or `pro` when that is unset too. |
 | `GEMINI_COMPANION_MAX_DIFF_KB` | Diff budget for reviews, in KB (default 600). |
 | `GEMINI_COMPANION_AGY` | Path to a specific `agy` executable. |
@@ -141,7 +141,7 @@ The tests run the companion against a fake `agy` ([`tests/fixtures/fake-agy.mjs`
 npm run live-check
 ```
 
-The fakes cannot notice when a new `agy` behaves differently, and `agy` updates itself. The live check runs four real Gemini jobs in scratch repositories against your signed-in `agy`. Each job is told to try things the guard must allow or refuse: reads outside the repository and through a link, edits inside and outside it and in `.git`, listed and unlisted web addresses, and a review. The check judges what actually happened, not what Gemini reports: the guard's decision for each exact call, the files on disk, a local web server's requests, and `agy`'s own record of each conversation with the raw tool results, where random tokens from outside the repository must never appear. It takes a few minutes and prints PASS, FAIL, SKIP (no evidence either way, for example because Gemini did not try that step) or INFO for each check. It exits with 0 only when every check passed, 1 when any failed and 2 when some were skipped (inconclusive: run it again). Run it after `agy` updates; `/gemini:setup` notes when `agy` is newer than the last version checked (`AGY_CHECKED_VERSION` in [`agy.mjs`](plugins/gemini/scripts/lib/agy.mjs)). `--companion <path>` checks another copy of the companion, such as the installed one, and `--keep` keeps the scratch folder.
+The fakes cannot notice when a new `agy` behaves differently, and `agy` updates itself. The live check runs four real Gemini jobs in scratch repositories against your signed-in `agy`. Each job is told to try things the guard must allow or refuse: reads outside the repository and through a link, edits inside and outside it and in `.git`, listed and unlisted web addresses, and a review. The check judges what actually happened, not what Gemini reports: the guard's decision for each exact call, the files on disk, a local web server's requests, and `agy`'s own record of each conversation with the raw tool results, where random tokens from outside the repository must never appear. It takes a few minutes and prints PASS, FAIL, SKIP (no evidence either way, for example because Gemini did not try that step) or INFO for each check. It exits with 0 only when every check passed, 1 when any failed and 2 when some were skipped (inconclusive: run it again). Run it after `agy` updates; `/gemini:setup` notes when `agy` is newer than the last version checked (`AGY_CHECKED_VERSION` in [`agy.mjs`](plugins/gemini/scripts/lib/agy.mjs)). It runs on Flash unless `--model` names another model: Gemini 4 Argon's safety filter stops the write job partway, which leaves its later checks skipped. `--companion <path>` checks another copy of the companion, such as the installed one, and `--keep` keeps the scratch folder.
 
 ## License
 
