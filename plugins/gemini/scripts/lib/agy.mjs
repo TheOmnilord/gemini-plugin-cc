@@ -280,7 +280,7 @@ function lastLine(text) {
 // The newest agy whose behavior was checked live (npm run live-check in the
 // plugin's repository). agy updates itself, and 1.3.0 changed how it treats
 // file edits, so setup notes a newer version.
-export const AGY_CHECKED_VERSION = "1.4.0";
+export const AGY_CHECKED_VERSION = "1.4.7";
 
 function versionParts(version) {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""));
