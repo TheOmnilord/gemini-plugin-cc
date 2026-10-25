@@ -9,6 +9,7 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { newerGeminiModel, plainFileLinks, resolveAgyModel } from "../plugins/gemini/scripts/lib/agy.mjs";
+import { installedPluginVersion, isNewerVersion } from "../plugins/gemini/scripts/lib/release.mjs";
 import { argAfter, captures, companion, companionAsync, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
 
 const FAKE_AGY = path.join(ROOT, "tests", "fixtures", "fake-agy.mjs");
@@ -27,6 +28,8 @@ function makeEnv(extra = {}) {
       GEMINI_COMPANION_DATA: data,
       GEMINI_COMPANION_MODEL: "",
       GEMINI_COMPANION_ADVERSARIAL_MODEL: "",
+      // No release lookups on GitHub; the tests that check them serve their own.
+      GEMINI_COMPANION_UPDATE_CHECK: "off",
       FAKE_AGY_CAPTURE: path.join(data, "capture.jsonl"),
       CLAUDE_CODE_SESSION_ID: "test-session",
       ...extra
@@ -368,6 +371,68 @@ test("setup notes an agy newer than the last version checked", () => {
   // Compared as numbers, not as text.
   assert.doesNotMatch(check("0.10.0"), /newer than/);
   assert.match(check("1.10.0"), /agy 1\.10\.0 is newer than/);
+});
+
+test("setup says when a newer plugin release is out and how to update", async () => {
+  const installed = installedPluginVersion();
+  assert.match(installed, /^\d+\.\d+\.\d+$/);
+  let latest = "99.0.0";
+  let requests = 0;
+  const server = http.createServer((request, response) => {
+    requests += 1;
+    if (request.url === "/plugin.json") {
+      response.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end(JSON.stringify({ name: "gemini", version: latest }));
+    } else {
+      response.writeHead(404).end();
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const setup = async (url, extra = {}) => {
+    const env = makeEnv({ GEMINI_COMPANION_UPDATE_CHECK: "", GEMINI_COMPANION_RELEASE_URL: url, ...extra }).env;
+    const result = await companionAsync(["setup"], { cwd: os.tmpdir(), env });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  const version = installed.replaceAll(".", "\\.");
+  try {
+    const newer = await setup(`${base}/plugin.json`);
+    assert.match(newer, new RegExp(`\\*\\*Plugin:\\*\\* ${version}; 99\\.0\\.0 is out`));
+    assert.match(newer, /Update the Gemini plugin to 99\.0\.0: in Claude Code, run `\/plugin marketplace update gemini-cc`, then `\/reload-plugins`\./);
+    assert.match(newer, /select `gemini-cc` and choose \*\*Enable auto-update\*\*/);
+    // An available update does not make the plugin unready.
+    assert.match(newer, /\*\*Ready:\*\* yes/);
+
+    latest = installed;
+    const current = await setup(`${base}/plugin.json`);
+    assert.match(current, new RegExp(`\\*\\*Plugin:\\*\\* ${version}, the latest release`));
+    assert.doesNotMatch(current, /Update the Gemini plugin/);
+
+    // A working copy ahead of the release is not told to update.
+    latest = "0.0.1";
+    assert.match(await setup(`${base}/plugin.json`), new RegExp(`\\*\\*Plugin:\\*\\* ${version}\\n`));
+
+    const failed = await setup(`${base}/gone`);
+    assert.match(failed, new RegExp(`\\*\\*Plugin:\\*\\* ${version} \\(could not check for a newer release: HTTP 404`));
+    assert.doesNotMatch(failed, /Update the Gemini plugin/);
+
+    const before = requests;
+    const off = await setup(`${base}/plugin.json`, { GEMINI_COMPANION_UPDATE_CHECK: "off" });
+    assert.equal(requests, before);
+    assert.match(off, new RegExp(`\\*\\*Plugin:\\*\\* ${version}\\n`));
+  } finally {
+    server.close();
+  }
+});
+
+test("plugin versions compare as numbers", () => {
+  assert.equal(isNewerVersion("0.3.22", "0.3.21"), true);
+  assert.equal(isNewerVersion("0.10.0", "0.9.9"), true);
+  assert.equal(isNewerVersion("1.0.0", "0.99.99"), true);
+  assert.equal(isNewerVersion("0.3.21", "0.3.21"), false);
+  assert.equal(isNewerVersion("0.3.20", "0.3.21"), false);
+  assert.equal(isNewerVersion("1.0", "0.3.21"), false);
+  assert.equal(isNewerVersion("0.3.22", null), false);
 });
 
 test("setup and runs explain a signed-out agy", () => {

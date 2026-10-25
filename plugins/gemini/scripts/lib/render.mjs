@@ -262,6 +262,7 @@ function renderAgySetup(report) {
   if (report.live) {
     lines.push(liveCheckLine(report.live));
   }
+  lines.push(pluginLine(report.plugin));
   lines.push(`- **Plugin's agy profile:** \`${report.profile}\``);
   lines.push(`- **Job data:** \`${report.dataDir}\``);
   return setupTail(lines, report);
@@ -269,6 +270,17 @@ function renderAgySetup(report) {
 
 function adversarialOrigin({ requested, source }) {
   return source ? `from ${source}` : `default: ${requested}`;
+}
+
+function pluginLine({ installed, latest, newer, error }) {
+  const version = installed ?? "unknown version";
+  if (newer) {
+    return `- **Plugin:** ${version}; ${latest} is out`;
+  }
+  if (error) {
+    return `- **Plugin:** ${version} (could not check for a newer release: ${error})`;
+  }
+  return `- **Plugin:** ${version}${latest && latest === installed ? ", the latest release" : ""}`;
 }
 
 function renderGeminiCliSetup(report) {
@@ -292,6 +304,7 @@ function renderGeminiCliSetup(report) {
   if (report.adversarialModel) {
     lines.push(`- **Adversarial reviews:** ${report.adversarialModel.requested} (${adversarialOrigin(report.adversarialModel)})`);
   }
+  lines.push(pluginLine(report.plugin));
   lines.push(`- **Job data:** \`${report.dataDir}\``);
   for (const note of auth.notes ?? []) {
     lines.push(`- ${note}`);

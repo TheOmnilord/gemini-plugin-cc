@@ -64,6 +64,7 @@ import {
 } from "./lib/prompts.mjs";
 import * as render from "./lib/render.mjs";
 import { fetchPages, normalizeUrls } from "./lib/reference.mjs";
+import { checkForRelease, pluginUpdateStep } from "./lib/release.mjs";
 import { parseReview, refusedTools, stoppedAfterRefusal } from "./lib/review.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -370,6 +371,7 @@ async function agySetupReport(backend, options) {
     backend: backend.name,
     ready: false,
     node: nodeReport(),
+    plugin: await checkForRelease(),
     agy: launch ? agyInstallReport(launch) : { installed: false },
     signIn: null,
     models: [],
@@ -436,6 +438,9 @@ async function agySetupReport(backend, options) {
       "To try a newer model, pass `--model <model>`, or set GEMINI_COMPANION_MODEL (every command) or GEMINI_COMPANION_ADVERSARIAL_MODEL (adversarial reviews). The plugin's own defaults change only with a plugin update."
     );
   }
+  if (report.plugin.newer) {
+    report.nextSteps.push(pluginUpdateStep(report.plugin));
+  }
   if (report.live && !report.live.ok) {
     report.nextSteps.push(report.live.hint);
   }
@@ -454,6 +459,7 @@ async function geminiCliSetupReport(backend, options) {
     backend: backend.name,
     ready: false,
     node: nodeReport(),
+    plugin: await checkForRelease(),
     npm: { available: npmProbe.status === 0, version: npmProbe.status === 0 ? npmProbe.stdout.trim() : null },
     gemini: launch
       ? { installed: true, version: geminiVersion, supported: isSupportedGeminiVersion(geminiVersion), source: launch.source }
@@ -481,6 +487,9 @@ async function geminiCliSetupReport(backend, options) {
       "Set up a sign-in the Gemini CLI still accepts: `GEMINI_API_KEY=<key>` in `~/.gemini/.env`, Vertex AI, or a Gemini Code Assist Standard or Enterprise account (run `gemini` in a terminal to choose). " +
         "For a personal Google account, use the default Antigravity CLI backend instead."
     );
+  }
+  if (report.plugin.newer) {
+    report.nextSteps.push(pluginUpdateStep(report.plugin));
   }
   if (report.live && !report.live.ok) {
     report.nextSteps.push(report.live.hint);
