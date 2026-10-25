@@ -31,6 +31,8 @@ function makeEnv(extra = {}) {
       GEMINI_COMPANION_DATA: data,
       GEMINI_COMPANION_MODEL: "",
       GEMINI_COMPANION_ADVERSARIAL_MODEL: "",
+      // No release lookups on GitHub; the tests that check them serve their own.
+      GEMINI_COMPANION_UPDATE_CHECK: "off",
       GEMINI_CLI_HOME: geminiHome,
       GEMINI_CLI_TRUST_WORKSPACE: "",
       FAKE_GEMINI_CAPTURE: path.join(data, "capture.jsonl"),
@@ -711,6 +713,8 @@ test("setup reports the CLI and sign-in state", () => {
   assert.equal(report.gemini.version, "0.61.0");
   assert.equal(report.gemini.supported, true);
   assert.equal(typeof report.auth.configured, "boolean");
+  assert.equal(report.plugin.checked, false);
+  assert.match(companion(["setup"], { cwd: os.tmpdir(), env }).stdout, /\*\*Plugin:\*\* \d+\.\d+\.\d+\n/);
 });
 
 test("a run counts as stopped after a refusal only when it read no more of the repository", () => {

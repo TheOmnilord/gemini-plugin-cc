@@ -41,8 +41,14 @@ claude plugin install gemini@gemini-cc
 
 Or inside Claude Code: `/plugin marketplace add TheOmnilord/gemini-plugin-cc`, then `/plugin install gemini@gemini-cc`. Start a new session (or run `/reload-plugins`), then run `/gemini:setup --check`.
 
-- Update: `claude plugin marketplace update gemini-cc`, then `claude plugin update gemini@gemini-cc`
-- Remove: `claude plugin uninstall gemini@gemini-cc`
+Then turn on auto-update, once: in Claude Code, run `/plugin`, open **Marketplaces**, select `gemini-cc` and choose **Enable auto-update**. Claude Code then installs new releases in the background during a session, and they load after `/reload-plugins` or in your next session. Claude Code turns auto-update on by itself only for Anthropic's own marketplaces, and a marketplace cannot turn it on for you.
+
+Without auto-update, Claude Code does not see a new release, and its plugin list offers no update, until you refresh the marketplace yourself. `/gemini:setup` says when a newer release is out. To update:
+
+- Inside Claude Code: `/plugin marketplace update gemini-cc`, then `/reload-plugins`
+- From a shell: `claude plugin marketplace update gemini-cc`, then `claude plugin update gemini@gemini-cc`, then start a new session
+
+To remove the plugin: `claude plugin uninstall gemini@gemini-cc`
 
 ## How it works
 
@@ -126,6 +132,7 @@ How it differs:
 | `GEMINI_COMPANION_AGY` | Path to a specific `agy` executable. |
 | `GEMINI_COMPANION_CLI` | Path to a specific Gemini CLI entry script or executable. |
 | `GEMINI_COMPANION_DATA` | Folder for job records, logs and the plugin's `agy` profile. |
+| `GEMINI_COMPANION_UPDATE_CHECK` | `off` stops `/gemini:setup` from reading the latest release's `plugin.json` from GitHub to say when a newer plugin release is out. |
 
 Per-run flags: `--model <m>`, `--timeout-min <n>`, `--allow-url <url>`, and for reviews `--max-diff-kb <n>` and `--context-url <url>`.
 
