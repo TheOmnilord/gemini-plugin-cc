@@ -27,6 +27,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { GeminiUnavailableError } from "./gemini.mjs";
+import { repositoryFilesBlock } from "./git.mjs";
 import { dataRoot } from "./jobs.mjs";
 import { killProcessTree, runCommand } from "./proc.mjs";
 
@@ -63,10 +64,15 @@ export const MODEL_ALIASES = {
 const MODEL_PATTERN = /^[A-Za-z0-9._:/-]+$/;
 const SIGNED_OUT = /please sign in|not signed in|sign in to|signed out|login required|not logged in|unauthenticated|re-?authenticate/i;
 const AGENT = "gemini-cc";
+// The agent's tools by their registry names, which every agy accepts. agy 1.5
+// shows agents view_file, write_to_file and replace_file_content as read_file,
+// write_file and edit_file, and leaves the others out: an agent there has no
+// folder listing, file search or page reading, so the companion lists the
+// repository's files in each new conversation and fetches --allow-url pages.
 const READ_TOOLS = ["view_file", "list_dir", "grep_search", "find_by_name"];
 const EDIT_TOOLS = ["write_to_file", "replace_file_content", "multi_replace_file_content"];
 const WEB_TOOLS = ["search_web", "read_url_content"];
-const TOUCH_TOOLS = new Set([...EDIT_TOOLS, "sed_file", "notebook_edit"]);
+const TOUCH_TOOLS = new Set([...EDIT_TOOLS, "write_file", "edit_file", "sed_file", "notebook_edit"]);
 const GUARD_SOURCE = fileURLToPath(new URL("../agy-guard.mjs", import.meta.url));
 const GUARD_FILE = "gemini-cc-guard.mjs";
 // Headless agy refuses, and ends the run on, any page read and any file read
@@ -103,7 +109,7 @@ const AGENT_DEFINITION = [
   "",
   "You are Gemini, working as an independent second engineer for Claude Code (Anthropic's coding agent) on the repository in your working directory. Claude and its user sent the request.",
   "",
-  "- Explore the repository with view_file, list_dir, grep_search and find_by_name before making claims about it.",
+  "- Read the repository's files before making claims about it. A new request lists the repository's files: open the ones you need by absolute path. Use folder listing or file search only if your tools include them.",
   "- Each request states whether this turn may edit files. When it says read-only, do not call the file-editing tools: describe the change instead (file, location, replacement code). When edits are allowed, keep them inside the repository, never inside any .git folder, and scoped to the request.",
   "- There is no shell: you cannot run commands, builds or tests. Name the commands Claude should run instead.",
   "- Web search is switched off for some runs, and you may open only the web addresses a request lists. Otherwise work from the repository.",
@@ -285,7 +291,7 @@ function lastLine(text) {
 // The newest agy whose behavior was checked live (npm run live-check in the
 // plugin's repository). agy updates itself, and 1.3.0 changed how it treats
 // file edits, so setup notes a newer version.
-export const AGY_CHECKED_VERSION = "1.4.7";
+export const AGY_CHECKED_VERSION = "1.5.5";
 
 function versionParts(version) {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""));
@@ -421,7 +427,16 @@ export function runAgy(options) {
   if (options.jsonSchemaFile) {
     cliArgs.push("--json-schema", options.jsonSchemaFile);
   }
-  const message = [options.prompt, options.finalInstruction].filter((part) => part?.trim()).join("\n\n");
+  // A resumed conversation already has the list from its first request.
+  let files = "";
+  if (!options.resumeSessionId) {
+    try {
+      files = repositoryFilesBlock(options.cwd);
+    } catch (error) {
+      options.onLog?.(`Could not list the repository's files for Gemini: ${error.message}`);
+    }
+  }
+  const message = [options.prompt, files, options.finalInstruction].filter((part) => part?.trim()).join("\n\n");
 
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
@@ -693,7 +708,7 @@ export function agyTouchedFiles(run, workspaceRoot) {
     if (!TOUCH_TOOLS.has(call.name) || call.status !== "success") {
       continue;
     }
-    const target = call.parameters?.TargetFile ?? call.parameters?.FilePath ?? call.parameters?.AbsolutePath;
+    const target = call.parameters?.Path ?? call.parameters?.TargetFile ?? call.parameters?.FilePath ?? call.parameters?.AbsolutePath;
     if (typeof target === "string" && target) {
       files.add(repoRelative(path.resolve(workspaceRoot, target), workspaceRoot));
     }

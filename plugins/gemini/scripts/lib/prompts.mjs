@@ -28,7 +28,7 @@ const AT_SIGN_NOTE =
 
 const READ_ONLY_RULES = [
   "- Read-only session: your file-editing and shell tools are disabled. Do not attempt changes; when a change is warranted, describe it precisely (file, location, replacement code).",
-  "- You can read and search files in the repository, and search the web when it genuinely helps."
+  "- You can read files in the repository (and search them, if your tools include a search), and search the web when it genuinely helps."
 ].join("\n");
 
 function writeRules(lockedBuildFiles) {

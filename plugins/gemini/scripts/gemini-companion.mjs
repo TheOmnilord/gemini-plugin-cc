@@ -63,7 +63,7 @@ import {
   TASK_FINAL_INSTRUCTION
 } from "./lib/prompts.mjs";
 import * as render from "./lib/render.mjs";
-import { fetchPages, normalizeUrls } from "./lib/reference.mjs";
+import { fetchPages, normalizeUrls, referenceBlock } from "./lib/reference.mjs";
 import { checkForRelease, pluginUpdateStep } from "./lib/release.mjs";
 import { parseReview, refusedTools, stoppedAfterRefusal } from "./lib/review.mjs";
 
@@ -224,12 +224,24 @@ async function readRequest(cwd, options, positionals) {
   return [positionals.join(" ").trim(), piped].filter(Boolean).join("\n\n");
 }
 
+// The --allow-url pages of an ask or task, fetched into the prompt: agy 1.5
+// gives Gemini no tool to open them. As with a review's pages, one that
+// cannot be read fails the job before Gemini starts.
+async function inlinePages(request) {
+  if (!request.inlineUrls?.length) {
+    return {};
+  }
+  const pages = await fetchPages(request.inlineUrls, { purpose: "the request" });
+  return { prompt: `${request.prompt.trimEnd()}\n\n${referenceBlock(pages, { review: false })}\n` };
+}
+
 // Returns null when the job was cancelled (before Gemini started, or while it
 // was starting and had to be stopped here), or when another process already
 // started it. A cancel during the run usually stops this process instead.
 // request.prepare, when given, runs once the job has started and returns
 // request fields that take time to gather, so a failure there is recorded on
-// the job like any other.
+// the job like any other. request.inlineUrls, a plain list that a queued
+// background job can store, names pages to fetch into the prompt the same way.
 async function executeJob(job, backend, request) {
   if (!startJob(job, { model: request.model ?? null, timeoutMs: request.timeoutMs ?? null })) {
     appendLog(job.logFile, "Not started: the job was cancelled, another process started it, or it waited too long to start.");
@@ -252,7 +264,7 @@ async function executeJob(job, backend, request) {
 
   let run;
   try {
-    const prepared = request.prepare ? await request.prepare() : {};
+    const prepared = request.prepare ? await request.prepare() : await inlinePages(request);
     if (stopIfCancelled()) {
       return null;
     }
@@ -587,7 +599,8 @@ async function handleReview(argv, kind) {
     allowUrls
   });
 
-  // Reviews stay grounded in the repository: no edits, no web. Every page is
+  // Reviews stay grounded in the repository: no edits, no web. Every page,
+  // --allow-url ones included (agy 1.5 gives Gemini no tool to open them), is
   // fetched before Gemini starts, so one that cannot be read fails the job
   // instead of leaving the review silently without that page.
   let pages = [];
@@ -595,7 +608,7 @@ async function handleReview(argv, kind) {
     launch,
     cwd: repoRoot,
     prepare: async () => {
-      pages = await fetchPages(contextUrls);
+      pages = await fetchPages([...new Set([...contextUrls, ...allowUrls])]);
       return { prompt: buildReviewPrompt(kind, context, focus, backend.prompt, { pages, allowUrls }) };
     },
     finalInstruction: REVIEW_FINAL_INSTRUCTION,
@@ -671,6 +684,7 @@ async function handleConsult(argv, kind) {
     write: writeMode,
     web: true,
     allowUrls,
+    inlineUrls: allowUrls,
     structured: false,
     model: resolveModel(options),
     resumeSessionId,

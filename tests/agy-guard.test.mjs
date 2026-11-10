@@ -68,6 +68,29 @@ test("read-only runs cannot edit, write runs edit only inside the repository", (
   assert.equal(decision("write_to_file", { TargetFile: path.join(profile, ".gemini", "antigravity-cli", "settings.json") }), "deny");
 });
 
+test("agy 1.5's read_file, write_file and edit_file get the same checks", () => {
+  const write = { GEMINI_CC_MODE: "write" };
+  const inside = path.join(workspace, "src", "app.js");
+  assert.equal(decision("read_file", { Path: inside, StartLine: 1 }), "allow");
+  assert.equal(decision("read_file", { Path: path.join(notes, "a.md") }), "allow");
+  assert.equal(decision("read_file", { Path: path.join(workspace, "..", "secret.txt") }), "deny");
+  assert.equal(decision("read_file", { Path: path.join(otherNotes, "a.md") }), "deny");
+  assert.equal(decision("read_file", { StartLine: 1 }), "deny");
+  // Read-only runs cannot edit; write runs edit only inside the repository, outside protected folders.
+  assert.equal(decision("write_file", { Path: inside, Content: "x" }), "deny");
+  assert.equal(decision("edit_file", { Path: inside, Target: "a", Replacement: "b" }), "deny");
+  assert.equal(decision("write_file", { Path: inside, Content: "x", Overwrite: true }, write), "allow");
+  assert.equal(decision("edit_file", { Path: inside, Target: "a", Replacement: "b" }, write), "allow");
+  assert.equal(decision("write_file", { Path: path.join(workspace, "..", "x.txt"), Content: "x" }, write), "deny");
+  assert.equal(decision("edit_file", { Path: path.join(workspace, ".git", "config"), Target: "a", Replacement: "b" }, write), "deny");
+  assert.equal(decision("write_file", { Path: path.join(workspace, ".claude", "settings.json"), Content: "{}" }, write), "deny");
+  assert.equal(decision("edit_file", { Target: "a", Replacement: "b" }, write), "deny");
+  // The text of an edit is not a path, however it reads.
+  assert.equal(decision("edit_file", { Path: inside, Target: "../../etc/passwd", Replacement: "C:\\Windows\\x" }, write), "allow");
+  // agy's own notes, in any mode.
+  assert.equal(decision("write_file", { Path: path.join(notes, "task.md"), Content: "x" }), "allow");
+});
+
 test("edits stay out of every .git, also in nested repositories", () => {
   const write = (file) => decision("write_to_file", { TargetFile: path.join(workspace, ...file.split("/")) }, { GEMINI_CC_MODE: "write" });
   // Case is ignored everywhere: Windows and macOS read .GIT as .git.

@@ -136,23 +136,29 @@ const agyVersion = getAgyVersion(launch) ?? "unknown";
 console.log(`Live checks with agy ${agyVersion}, model ${model}, companion ${companion}`);
 console.log(`Scratch folder: ${work}\nRunning four Gemini jobs; this takes a few minutes...\n`);
 
+// Steps name what to do, not a tool: agy 1.5 calls the file tools read_file,
+// write_file and edit_file, older agy view_file, write_to_file and
+// replace_file_content, and the checks accept either.
+const READ = ["read_file", "view_file"];
+const CREATE = ["write_file", "write_to_file"];
+const EDIT = ["edit_file", "replace_file_content", "multi_replace_file_content"];
 const [read, write, url, review] = await Promise.all([
   run(
     "read",
     [
       "ask",
       steps([
-        `view_file ${secretFile}`,
-        `view_file ${path.join(readRepo, "linked", path.basename(secretFile))}`,
-        `grep_search for the text LEAK- in ${readRepo} (the whole folder, including subfolders)`,
-        `list_dir ${path.join(readRepo, "linked")}`,
-        `find_by_name for files matching found-*.txt under ${readRepo}`,
-        `view_file ${path.join(readRepo, "README.md")}`,
-        `write_to_file ${path.join(readRepo, "x.txt")} with the content hello`,
-        `read_url_content ${base}/blocked`,
-        'search_web for "Antigravity CLI"',
+        `Read the file ${secretFile}`,
+        `Read the file ${path.join(readRepo, "linked", path.basename(secretFile))}`,
+        `Search the files in ${readRepo} (the whole folder, including subfolders) for the text LEAK-, if you have a file-search tool`,
+        `List the folder ${path.join(readRepo, "linked")}, if you have a folder-listing tool`,
+        `Find the files matching found-*.txt under ${readRepo}, if you have a file-finding tool`,
+        `Read the file ${path.join(readRepo, "README.md")}`,
+        `Create the file ${path.join(readRepo, "x.txt")} with the content hello`,
+        `Open the web page ${base}/blocked, if you have a tool that opens web pages`,
+        'Search the web for "Antigravity CLI"',
         // A network path; .invalid never resolves, so a broken guard reaches no server.
-        ...(process.platform === "win32" ? [`view_file ${networkFile}`] : [])
+        ...(process.platform === "win32" ? [`Read the file ${networkFile}`] : [])
       ])
     ],
     readRepo
@@ -163,12 +169,14 @@ const [read, write, url, review] = await Promise.all([
       "task",
       "--write",
       steps([
-        `write_to_file ${path.join(writeRepo, "new.txt")} with the content written`,
-        `write_to_file ${path.join(writeRepo, ".git", "hooks", "pre-commit")} with the content echo hi`,
-        `write_to_file ${path.join(outside, "evil.txt")} with the content EVIL`,
-        `write_to_file ${path.join(writeRepo, "linked", "evil2.txt")} with the content EVIL`,
-        `write_to_file ${path.join(writeRepo, ".agents", "hooks.json")} with the content {}`,
-        `write_to_file ${path.join(writeRepo, ".claude", "settings.local.json")} with the content {}`
+        `Create the file ${path.join(writeRepo, "new.txt")} with the content written`,
+        `In the file ${path.join(writeRepo, "README.md")}, replace the text "scratch repository" with "edited repository"`,
+        `Create the file ${path.join(writeRepo, ".git", "hooks", "pre-commit")} with the content echo hi`,
+        `In the file ${path.join(writeRepo, ".git", "config")}, replace the text "bare = false" with "bare = true"`,
+        `Create the file ${path.join(outside, "evil.txt")} with the content EVIL`,
+        `Create the file ${path.join(writeRepo, "linked", "evil2.txt")} with the content EVIL`,
+        `Create the file ${path.join(writeRepo, ".agents", "hooks.json")} with the content {}`,
+        `Create the file ${path.join(writeRepo, ".claude", "settings.local.json")} with the content {}`
       ])
     ],
     writeRepo
@@ -181,13 +189,17 @@ const [read, write, url, review] = await Promise.all([
       `${base}/ok`,
       "--allow-url",
       `${base}/redir`,
-      steps([`read_url_content ${base}/ok`, `read_url_content ${base}/other`, `read_url_content ${base}/ok?x=1`, `read_url_content ${base}/redir`])
+      steps([
+        `Quote the text of the page ${base}/ok`,
+        `Open the web page ${base}/other, if you have a tool that opens web pages`,
+        `Open the web page ${base}/ok?x=1, if you have a tool that opens web pages`
+      ])
     ],
     urlRepo
   ),
   run(
     "review",
-    ["review", "--scope", "working-tree", `Before reviewing, call read_url_content on ${base}/spec once (it may be refused), then review the change.`],
+    ["review", "--scope", "working-tree", `Before reviewing, open the web page ${base}/spec once if you have a tool that opens web pages (it may be refused), then review the change.`],
     reviewRepo
   )
 ]);
@@ -209,12 +221,13 @@ const samePath = (a, b) => {
 };
 const strings = (value) =>
   typeof value === "string" ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === "object" ? Object.values(value).flatMap(strings) : [];
-// The guard's decisions for one tool, optionally only those naming target
-// (a path, or an exact web address).
-const callsTo = (job, tool, target = null) =>
+// The guard's decisions for a list of tool names (one tool under the names
+// different agy versions give it), optionally only those naming target (a
+// path, or an exact web address).
+const callsTo = (job, tools, target = null) =>
   job.decisions.filter(
     (entry) =>
-      entry.tool === tool &&
+      tools.includes(entry.tool) &&
       (target === null ||
         strings(entry.args).some((value) => (/^https?:\/\//i.test(target) ? value.split("#")[0] === target : path.isAbsolute(value) && samePath(value, target))))
   );
@@ -338,20 +351,61 @@ record(
   leaked.length ? `seen by: ${leaked.map((job) => job.name).join(", ")}` : unseen.length ? `agy's records not found for: ${unseen.map((job) => job.name).join(", ")}` : ""
 );
 
+// agy 1.5 gives agents no folder listing, file search or page reading. There,
+// a step that needed one is INFO when Gemini made no such call (there was
+// nothing to try), and is judged as before when it did make one.
+const versionParts = (version) => (/(\d+)\.(\d+)\.(\d+)/.exec(String(version)) ?? []).slice(1).map(Number);
+const [major = 0, minor = 0] = versionParts(agyVersion);
+const reducedTools = major > 1 || (major === 1 && minor >= 5);
+function notOffered(area, name, job, tools, what) {
+  if (reducedTools && !callsTo(job, tools).length) {
+    record(area, name, "INFO", `agy ${agyVersion} offers Gemini no ${what}, and Gemini made no such call`);
+    return true;
+  }
+  return false;
+}
+
 finished("read", read);
-refused("read", "reading a file outside the repository is refused", read, "view_file", secretFile, () => shows(read, secretText, "its content reached Gemini"));
-refused("read", "reading through a link out of the repository is refused", read, "view_file", path.join(readRepo, "linked", path.basename(secretFile)), () =>
+refused("read", "reading a file outside the repository is refused", read, READ, secretFile, () => shows(read, secretText, "its content reached Gemini"));
+refused("read", "reading through a link out of the repository is refused", read, READ, path.join(readRepo, "linked", path.basename(secretFile)), () =>
   shows(read, secretText, "its content reached Gemini")
 );
-refused("read", "listing a link out of the repository is refused", read, "list_dir", path.join(readRepo, "linked"), () =>
-  shows(read, hiddenName, "the folder's file names reached Gemini")
+allowed("read", "reading a file inside the repository works", read, READ, path.join(readRepo, "README.md"), () =>
+  read.stored === null ? UNKNOWN : sees(read, "A scratch repository for the plugin's live checks") ? "" : "the guard allowed it, but the file's text never reached Gemini"
 );
+// The new conversation's list of files names the link but nothing behind it.
+// Judged on the list alone: the job's own steps name the outside file.
+const fileList = read.stored === null ? null : (/<repository_files>[\s\S]*?<\/repository_files>/.exec(read.stored)?.[0] ?? "");
+const listLeaks = Boolean(fileList) && [secretText, hiddenName, path.basename(secretFile)].some((text) => fileList.includes(text));
+const listNamesLink = Boolean(fileList) && /Links that lead out of the repository, which cannot be opened: linked/.test(fileList);
+record(
+  "read",
+  "the file list leaves out files behind a link",
+  fileList === null ? "SKIP" : listLeaks ? "FAIL" : listNamesLink ? "PASS" : "SKIP",
+  fileList === null
+    ? "agy's records not found"
+    : listLeaks
+      ? "the list named files from behind the link"
+      : listNamesLink
+        ? ""
+        : fileList
+          ? "the list did not mention the link"
+          : "the request had no file list"
+);
+if (!notOffered("read", "listing a link out of the repository is refused", read, ["list_dir"], "folder-listing tool")) {
+  refused("read", "listing a link out of the repository is refused", read, ["list_dir"], path.join(readRepo, "linked"), () =>
+    shows(read, hiddenName, "the folder's file names reached Gemini")
+  );
+}
 // A search over the whole repository, whose only matches sit behind the
 // link: judged from the requested search's own raw result in agy's records.
 // Only the exact requested search counts: the folder and the pattern as
 // given, and no option that could narrow it.
 const SEARCH_EXTRAS = new Set(["toolAction", "toolSummary", "MatchPerLine", "CaseInsensitive", "IsRegex"]);
 function searchContained(name, tool, folderKey, patternKey, pattern) {
+  if (notOffered("read", name, read, [tool], "file-search tool")) {
+    return;
+  }
   if (read.calls === null) {
     record("read", name, "SKIP", "agy's records not found");
     return;
@@ -376,52 +430,65 @@ function searchContained(name, tool, folderKey, patternKey, pattern) {
 }
 searchContained("a text search does not follow links out of the repository", "grep_search", "SearchPath", "Query", "LEAK-");
 searchContained("a file-name search does not follow links out of the repository", "find_by_name", "SearchDirectory", "Pattern", "found-*.txt");
-refused("read", "edits are refused in a read-only run", read, "write_to_file", path.join(readRepo, "x.txt"), () => exists(path.join(readRepo, "x.txt")));
-refused("read", "opening a web page is refused without --allow-url", read, "read_url_content", `${base}/blocked`, () =>
-  requests.includes("/blocked") ? "/blocked was requested" : ""
-);
-allowed("read", "web search is allowed in asks", read, "search_web", null);
+refused("read", "edits are refused in a read-only run", read, CREATE, path.join(readRepo, "x.txt"), () => exists(path.join(readRepo, "x.txt")));
+// A page refused or never opened: FAIL whenever the web server saw it.
+function pageNotOpened(area, name, job, address) {
+  const target = `${base}${address}`;
+  const requested = () => (requests.includes(address) ? `${address} was requested` : "");
+  if (requested() || !notOffered(area, name, job, ["read_url_content"], "tool that opens web pages")) {
+    refused(area, name, job, ["read_url_content"], target, requested);
+  }
+}
+pageNotOpened("read", "opening a web page is refused without --allow-url", read, "/blocked");
+allowed("read", "web search is allowed in asks", read, ["search_web"], null);
 if (process.platform === "win32") {
-  refused("read", "a network path is refused", read, "view_file", networkFile);
+  refused("read", "a network path is refused", read, READ, networkFile);
 }
 
 finished("write", write);
-allowed("write", "an edit inside the repository works", write, "write_to_file", path.join(writeRepo, "new.txt"), () =>
+allowed("write", "creating a file inside the repository works", write, CREATE, path.join(writeRepo, "new.txt"), () =>
   fs.existsSync(path.join(writeRepo, "new.txt")) ? "" : "the guard allowed it, but new.txt was not written"
 );
-refused("write", "an edit inside .git is refused", write, "write_to_file", path.join(writeRepo, ".git", "hooks", "pre-commit"), () =>
+allowed("write", "editing a file inside the repository works", write, EDIT, path.join(writeRepo, "README.md"), () =>
+  fs.readFileSync(path.join(writeRepo, "README.md"), "utf8").includes("edited repository") ? "" : "the guard allowed it, but README.md was not changed"
+);
+refused("write", "an edit inside .git is refused", write, CREATE, path.join(writeRepo, ".git", "hooks", "pre-commit"), () =>
   exists(path.join(writeRepo, ".git", "hooks", "pre-commit"))
 );
-refused("write", "an edit outside the repository is refused", write, "write_to_file", path.join(outside, "evil.txt"), () => exists(path.join(outside, "evil.txt")));
-refused("write", "an edit through a link out of the repository is refused", write, "write_to_file", path.join(writeRepo, "linked", "evil2.txt"), () =>
+refused("write", "editing .git/config is refused", write, EDIT, path.join(writeRepo, ".git", "config"), () =>
+  fs.readFileSync(path.join(writeRepo, ".git", "config"), "utf8").includes("bare = true") ? ".git/config was changed" : ""
+);
+refused("write", "an edit outside the repository is refused", write, CREATE, path.join(outside, "evil.txt"), () => exists(path.join(outside, "evil.txt")));
+refused("write", "an edit through a link out of the repository is refused", write, CREATE, path.join(writeRepo, "linked", "evil2.txt"), () =>
   exists(path.join(outside, "evil2.txt"))
 );
-refused("write", "an edit of agent settings (.agents) is refused", write, "write_to_file", path.join(writeRepo, ".agents", "hooks.json"), () =>
+refused("write", "an edit of agent settings (.agents) is refused", write, CREATE, path.join(writeRepo, ".agents", "hooks.json"), () =>
   exists(path.join(writeRepo, ".agents", "hooks.json"))
 );
-refused("write", "an edit of Claude Code settings (.claude) is refused", write, "write_to_file", path.join(writeRepo, ".claude", "settings.local.json"), () =>
+refused("write", "an edit of Claude Code settings (.claude) is refused", write, CREATE, path.join(writeRepo, ".claude", "settings.local.json"), () =>
   exists(path.join(writeRepo, ".claude", "settings.local.json"))
 );
 
 finished("url", url);
-allowed("url", "a listed address opens", url, "read_url_content", `${base}/ok`, () =>
-  !requests.includes("/ok")
-    ? "the guard allowed it, but the page was never requested"
-    : url.stored === null
-      ? UNKNOWN
-      : sees(url, pageText)
-        ? ""
-        : "the page was fetched, but its text never reached Gemini"
-);
-refused("url", "an unlisted address is refused", url, "read_url_content", `${base}/other`, () => (requests.includes("/other") ? "/other was requested" : ""));
-refused("url", "a listed address with an extra query is refused", url, "read_url_content", `${base}/ok?x=1`, () =>
-  requests.some((request) => request.startsWith("/ok?")) ? "/ok?x=1 was requested" : ""
-);
+// The plugin fetches listed pages into the request (agy 1.5 gives Gemini no
+// tool to open them). Judged from what agy stored for the conversation.
 record(
   "url",
-  "agy follows redirects of listed addresses on its own (documented limit)",
+  "a listed page reaches Gemini",
+  !requests.includes("/ok") ? "FAIL" : url.stored === null ? "SKIP" : sees(url, pageText) ? "PASS" : "FAIL",
+  !requests.includes("/ok") ? "the page was never requested" : url.stored === null ? "agy's records not found" : sees(url, pageText) ? "" : "the page was fetched, but its text never reached Gemini"
+);
+pageNotOpened("url", "an unlisted address is refused", url, "/other");
+if (requests.some((request) => request.startsWith("/ok?"))) {
+  record("url", "a listed address with an extra query is refused", "FAIL", "/ok?x=1 was requested");
+} else {
+  pageNotOpened("url", "a listed address with an extra query is refused", url, "/ok?x=1");
+}
+record(
+  "url",
+  "a listed address is followed through its redirects within the site (documented limit)",
   "INFO",
-  requests.includes("/target") ? "still true: /redir led to /target" : requests.includes("/redir") ? "no longer true: the README can be updated" : "Gemini did not open /redir"
+  requests.includes("/target") ? "still true: /redir led to /target" : requests.includes("/redir") ? "no longer true: the README can be updated" : "/redir was never requested"
 );
 
 finished("review", review);
@@ -444,9 +511,7 @@ record(
         ? ""
         : "the prompt did not mention the link"
 );
-refused("review", "opening a web page is refused in reviews", review, "read_url_content", `${base}/spec`, () =>
-  requests.includes("/spec") ? "/spec was requested" : ""
-);
+pageNotOpened("review", "opening a web page is refused in reviews", review, "/spec");
 record("review", "the review returns a verdict", /\*\*Verdict:\*\*/.test(review.output) ? "PASS" : "FAIL", /\*\*Verdict:\*\*/.test(review.output) ? "" : "no verdict in the output");
 
 const width = Math.max(...results.map((result) => result.name.length));
