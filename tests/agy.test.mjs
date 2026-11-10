@@ -52,6 +52,9 @@ test("maps model aliases to agy models", () => {
   assert.equal(resolveAgyModel("flash"), "gemini-3.8-flash-medium");
   assert.equal(resolveAgyModel("pro"), "gemini-4-argon-high");
   assert.equal(resolveAgyModel("argon-medium"), "gemini-4-argon-medium");
+  assert.equal(resolveAgyModel("carbon"), "gemini-4-carbon-high");
+  assert.equal(resolveAgyModel("carbon-medium"), "gemini-4-carbon-medium");
+  assert.equal(resolveAgyModel("carbon-low"), "gemini-4-carbon-low");
   assert.equal(resolveAgyModel("flash-lite"), "gemini-3.8-flash-low");
   assert.equal(resolveAgyModel("gemini-3.7-flash-high"), "gemini-3.7-flash-high");
 });

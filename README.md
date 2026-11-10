@@ -88,10 +88,11 @@ The default is `gemini-4-argon-high` for every command, `/gemini:adversarial-rev
 | `flash-lite` | `gemini-3.8-flash-low` |
 | `argon-medium` | `gemini-4-argon-medium` |
 | `pro-low`, `argon-low` | `gemini-4-argon-low` |
+| `carbon`, `carbon-medium`, `carbon-low` | `gemini-4-carbon-high`, `gemini-4-carbon-medium`, `gemini-4-carbon-low` |
 
-Any other model id from `agy models` works too; `/gemini:setup` lists the models your account offers.
+Gemini 4 Carbon is Google's strongest model, but at its launch `carbon-high` runs failed or timed out through `agy` where Argon answered, so it is not a default yet: pass `--model carbon` (or `carbon-medium`, `carbon-low`) to try it. Any other model id from `agy models` works too; `/gemini:setup` lists the models your account offers.
 
-The defaults and aliases name fixed models, so a new Gemini release is not used until a plugin update moves them: a new model can follow the review format differently. `/gemini:setup` names any newer flash or argon model your account offers than the ones in use, and you can use one right away by its id. With the Gemini CLI, `pro` and `flash` are the CLI's own aliases and follow its updates; the `argon` aliases are for the Antigravity CLI only.
+The defaults and aliases name fixed models, so a new Gemini release is not used until a plugin update moves them: a new model can follow the review format differently. `/gemini:setup` names any newer flash, argon or carbon model your account offers than the ones in use, and you can use one right away by its id. With the Gemini CLI, `pro` and `flash` are the CLI's own aliases and follow its updates; the `argon` and `carbon` aliases are for the Antigravity CLI only.
 
 ## Gemini CLI backend (opt-in)
 
