@@ -47,11 +47,16 @@ export const MODEL_ALIASES = {
   "flash-high": "gemini-3.8-flash-high",
   "flash-low": "gemini-3.8-flash-low",
   "flash-lite": "gemini-3.8-flash-low",
+  carbon: "gemini-4-carbon-high",
+  "carbon-medium": "gemini-4-carbon-medium",
+  "carbon-low": "gemini-4-carbon-low",
   argon: "gemini-4-argon-high",
   "argon-medium": "gemini-4-argon-medium",
   "argon-low": "gemini-4-argon-low",
-  // Gemini 4 Argon replaced Gemini 3.1 Pro; pro keeps naming the top model, as
-  // it does in the Gemini CLI.
+  // Gemini 4 Argon replaced Gemini 3.1 Pro, and pro names it, as the default.
+  // Gemini 4 Carbon is Google's strongest model, but at its launch (agy 1.5.5,
+  // November 2026) carbon-high runs failed or timed out where Argon passed, so
+  // it is offered by alias only until it answers reliably.
   pro: "gemini-4-argon-high",
   "pro-low": "gemini-4-argon-low"
 };

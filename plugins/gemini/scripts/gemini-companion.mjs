@@ -86,7 +86,7 @@ function usage() {
     "  cancel [job-id] [--json]",
     "  resume-candidate [--json]",
     "",
-    "Common: --cwd <dir> (-C). Models: pro, argon, flash, flash-lite, auto or a full model id (/gemini:setup lists them).",
+    "Common: --cwd <dir> (-C). Models: pro, argon, carbon, flash, flash-lite, auto or a full model id (/gemini:setup lists them).",
     "Backend: Antigravity CLI (agy) by default; GEMINI_COMPANION_BACKEND=gemini-cli selects the Gemini CLI."
   ].join("\n");
 }
