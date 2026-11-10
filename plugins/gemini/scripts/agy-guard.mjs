@@ -20,8 +20,12 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-const READ_TOOLS = new Set(["view_file", "list_dir", "grep_search", "find_by_name"]);
-const WRITE_TOOLS = new Set(["write_to_file", "replace_file_content", "multi_replace_file_content", "sed_file", "notebook_edit"]);
+// agy 1.5 gives agents read_file, write_file and edit_file (Path, Content,
+// Target, Replacement) in place of view_file, write_to_file and
+// replace_file_content, and no folder listing, search or page reading; the
+// older names stay for older agy.
+const READ_TOOLS = new Set(["read_file", "view_file", "list_dir", "grep_search", "find_by_name"]);
+const WRITE_TOOLS = new Set(["write_file", "edit_file", "write_to_file", "replace_file_content", "multi_replace_file_content", "sed_file", "notebook_edit"]);
 const WEB_TOOLS = new Set(["search_web", "read_url_content"]);
 // Bookkeeping with no effect outside the conversation. finish returns --json-schema output.
 const NEUTRAL_TOOLS = new Set(["finish", "wait", "wait_5_seconds", "list_permissions", "command_status"]);

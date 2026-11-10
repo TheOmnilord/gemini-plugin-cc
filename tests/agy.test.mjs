@@ -8,7 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { newerGeminiModel, plainFileLinks, resolveAgyModel } from "../plugins/gemini/scripts/lib/agy.mjs";
+import { agyTouchedFiles, newerGeminiModel, plainFileLinks, resolveAgyModel } from "../plugins/gemini/scripts/lib/agy.mjs";
 import { installedPluginVersion, isNewerVersion } from "../plugins/gemini/scripts/lib/release.mjs";
 import { argAfter, captures, companion, companionAsync, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
 
@@ -365,8 +365,9 @@ test("newer Gemini models are found by line and version", () => {
 
 test("setup notes an agy newer than the last version checked", () => {
   const check = (version) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv({ FAKE_AGY_VERSION: version }).env }).stdout;
-  assert.match(check("1.4.8"), /\*\*Note:\*\* agy 1\.4\.8 is newer than 1\.4\.7, the last version this plugin was checked against/);
+  assert.match(check("1.5.6"), /\*\*Note:\*\* agy 1\.5\.6 is newer than 1\.5\.5, the last version this plugin was checked against/);
   assert.match(check("2.0.0"), /agy 2\.0\.0 is newer than/);
+  assert.doesNotMatch(check("1.5.5"), /newer than/);
   assert.doesNotMatch(check("1.4.7"), /newer than/);
   assert.doesNotMatch(check("1.4.0"), /newer than/);
   assert.doesNotMatch(check("1.3.1"), /newer than/);
@@ -610,31 +611,99 @@ test("--context-url adds fetched pages to the review; Gemini still gets no web a
   }
 });
 
-test("--allow-url hands the guard the exact addresses, for reviews and asks", () => {
+test("--allow-url pages are fetched into the prompt and handed to the guard, for reviews and asks", async () => {
   const repo = makeRepo();
   fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
   const { env, capture } = makeEnv();
+  const server = http.createServer((request, response) => {
+    if (request.url === "/spec") {
+      response.writeHead(200, { "content-type": "text/plain" }).end("SPEC-TEXT empty lists average to 0");
+    } else if (request.url === "/") {
+      response.writeHead(200, { "content-type": "text/plain" }).end("ROOT-TEXT");
+    } else {
+      response.writeHead(404).end();
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    // agy 1.5 gives Gemini no tool to open a page, so the plugin fetches it.
+    const review = await companionAsync(["review", "--allow-url", `${base}/spec#x`, `--allow-url=${base}`], { cwd: repo, env });
+    assert.equal(review.status, 0, review.stderr);
+    assert.ok(review.stdout.includes(`**Gemini may open:** ${base}/spec, ${base}/`), review.stdout);
+    assert.ok(review.stdout.includes(`**Reference pages:** ${base}/spec, ${base}/`), review.stdout);
+    const ask = await companionAsync(["ask", "--allow-url", `${base}/spec`], { cwd: repo, env, input: "What does the spec say?" });
+    assert.equal(ask.status, 0, ask.stderr);
 
-  const review = companion(["review", "--allow-url", "https://docs.example.com/spec#x", "--allow-url=http://localhost:3000"], { cwd: repo, env });
-  assert.equal(review.status, 0, review.stderr);
-  assert.match(review.stdout, /\*\*Gemini may open:\*\* https:\/\/docs\.example\.com\/spec, http:\/\/localhost:3000\//);
-  const ask = companion(["ask", "--allow-url", "https://docs.example.com/spec"], { cwd: repo, env, input: "What does the spec say?" });
-  assert.equal(ask.status, 0, ask.stderr);
+    const [reviewCall, askCall] = captures(capture);
+    assert.deepEqual(JSON.parse(reviewCall.env.webAllow), [`${base}/spec`, `${base}/`]);
+    assert.equal(reviewCall.env.web, "0");
+    assert.ok(reviewCall.message.includes("<web_access>\nThe plugin fetched these addresses for you"), reviewCall.message);
+    assert.ok(reviewCall.message.includes(`- ${base}/spec\n- ${base}/\nWeb search and every other address are refused`), reviewCall.message);
+    assert.match(reviewCall.message, /<reference_material>[\s\S]*SPEC-TEXT[\s\S]*ROOT-TEXT[\s\S]*<\/reference_material>/);
+    assert.match(reviewCall.message, /Your only web access in this review is the exact addresses/);
+    assert.deepEqual(JSON.parse(askCall.env.webAllow), [`${base}/spec`]);
+    assert.equal(askCall.env.web, "1");
+    assert.match(askCall.message, /The plugin fetched these web addresses for you[^\n]*\/spec/);
+    assert.match(askCall.message, /<reference_material>\nPages named for this request[\s\S]*SPEC-TEXT/);
+    // The pages come before the closing instruction.
+    assert.ok(askCall.message.indexOf("SPEC-TEXT") < askCall.message.indexOf("answer the request now"));
 
-  const [reviewCall, askCall] = captures(capture);
-  assert.deepEqual(JSON.parse(reviewCall.env.webAllow), ["https://docs.example.com/spec", "http://localhost:3000/"]);
-  assert.equal(reviewCall.env.web, "0");
-  assert.match(reviewCall.message, /<web_access>[\s\S]*- https:\/\/docs\.example\.com\/spec\n- http:\/\/localhost:3000\/\nWeb search and every other address are refused/);
-  assert.match(reviewCall.message, /Your only web access in this review is reading the exact addresses/);
-  assert.deepEqual(JSON.parse(askCall.env.webAllow), ["https://docs.example.com/spec"]);
-  assert.equal(askCall.env.web, "1");
-  assert.match(askCall.message, /You may open exactly these web addresses[^\n]*https:\/\/docs\.example\.com\/spec/);
+    // A page that cannot be fetched fails the ask before Gemini starts.
+    const missing = await companionAsync(["ask", "--allow-url", `${base}/gone`], { cwd: repo, env, input: "And this one?" });
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /Could not fetch .*\/gone for the request: HTTP 404/);
+    assert.equal(captures(capture).length, 2);
 
-  // Off unless asked for.
-  const plain = companion(["ask"], { cwd: repo, env, input: "hello" });
-  assert.equal(plain.status, 0, plain.stderr);
-  assert.equal(captures(capture).at(-1).env.webAllow, "[]");
-  assert.doesNotMatch(captures(capture).at(-1).message, /You may open exactly/);
+    // Off unless asked for.
+    const plain = companion(["ask"], { cwd: repo, env, input: "hello" });
+    assert.equal(plain.status, 0, plain.stderr);
+    assert.equal(captures(capture).at(-1).env.webAllow, "[]");
+    assert.doesNotMatch(captures(capture).at(-1).message, /fetched these web addresses|<reference_material>/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("a new conversation lists the repository's files; links out and ignored files stay out", () => {
+  const repo = makeRepo();
+  const outside = tempDir("gemini-cc-outside-");
+  fs.writeFileSync(path.join(outside, "secret-name.txt"), "x");
+  fs.mkdirSync(path.join(repo, "src"));
+  fs.writeFileSync(path.join(repo, "src", "new.js"), "// untracked\n");
+  fs.writeFileSync(path.join(repo, ".gitignore"), "build/\n");
+  fs.mkdirSync(path.join(repo, "build"));
+  fs.writeFileSync(path.join(repo, "build", "out.js"), "");
+  fs.symlinkSync(outside, path.join(repo, "linked"), "junction");
+  const { env, capture } = makeEnv();
+  assert.equal(companion(["ask"], { cwd: repo, env, input: "Where is average defined?" }).status, 0);
+  const [first] = captures(capture);
+  const block = /<repository_files>\n([\s\S]*?)\n<\/repository_files>/.exec(first.message)?.[1] ?? "";
+  const lines = block.split("\n");
+  for (const file of ["app.js", "src/new.js", ".gitignore"]) {
+    assert.ok(lines.includes(file), `${file} missing from:\n${block}`);
+  }
+  assert.doesNotMatch(block, /build\/out\.js|secret-name/);
+  assert.match(block, /Links that lead out of the repository, which cannot be opened: linked/);
+  assert.ok(first.message.indexOf("<repository_files>") < first.message.indexOf("answer the request now"));
+
+  // A resumed conversation already has the list.
+  assert.equal(companion(["ask", "--resume-last"], { cwd: repo, env, input: "And its callers?" }).status, 0);
+  assert.doesNotMatch(captures(capture).at(-1).message, /<repository_files>/);
+});
+
+test("edits made with agy 1.5's write_file and edit_file are reported", () => {
+  const root = path.resolve(os.tmpdir(), "touched-repo");
+  const run = {
+    toolCalls: [
+      { name: "write_file", status: "success", parameters: { Path: path.join(root, "src", "new.js"), Content: "x" } },
+      { name: "edit_file", status: "success", parameters: { Path: path.join(root, "app.js"), Target: "a", Replacement: "b" } },
+      { name: "edit_file", status: "error", parameters: { Path: path.join(root, "failed.js"), Target: "a", Replacement: "b" } },
+      { name: "read_file", status: "success", parameters: { Path: path.join(root, "read.js") } }
+    ]
+  };
+  assert.deepEqual(agyTouchedFiles(run, root), ["app.js", "src/new.js"]);
 });
 
 test("bad --context-url and --allow-url addresses are rejected before Gemini starts", () => {

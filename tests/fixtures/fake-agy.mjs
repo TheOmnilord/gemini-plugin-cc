@@ -127,7 +127,7 @@ process.stdin.on("end", async () => {
   if (mode === "ignores-guard") {
     // A broken agy that skips the guard and does what the prompt asks: writes
     // every file it names, wherever it is.
-    for (const [, file, content] of message.matchAll(/write_to_file (\S+) with the content (.+)$/gm)) {
+    for (const [, file, content] of message.matchAll(/Create the file (\S+) with the content (.+)$/gm)) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, content);
     }

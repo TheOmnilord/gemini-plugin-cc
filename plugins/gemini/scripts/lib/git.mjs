@@ -603,3 +603,63 @@ export function collectReviewContext(cwd, target, options = {}) {
     target.mode === "working-tree" ? collectWorkingTree(repoRoot, budget) : collectBranch(repoRoot, target.baseRef, budget);
   return { repoRoot, branch: getCurrentBranch(repoRoot), target, budget, ...details };
 }
+
+const MAX_FILE_LIST_BYTES = 48 * 1024;
+
+// Keeps a file name from closing the block it sits in.
+function fenceFileName(name) {
+  return name.replace(/<(?=\/?repository_files)/gi, "&lt;");
+}
+
+// The repository's files for agy runs: agy 1.5 gives agents no folder listing
+// or file search, so Gemini opens files by the paths listed here. Tracked and
+// untracked files, without ignored ones, deleted ones, or anything behind a
+// link that leads out of the repository (git lists a linked folder's files as
+// the repository's own); only such a link's own name is listed. Past the size
+// budget the rest is counted by top-level folder. "" outside a git repository.
+export function repositoryFilesBlock(cwd, { maxBytes = MAX_FILE_LIST_BYTES } = {}) {
+  const repoRoot = cwd ? getRepoRoot(cwd) : null;
+  if (!repoRoot) {
+    return "";
+  }
+  const listed = [...new Set(pathList(gitChecked(repoRoot, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"])))].sort();
+  const leadsOut = new Map();
+  const shown = [];
+  const links = new Set();
+  const rest = new Map();
+  let bytes = 0;
+  let index = 0;
+  for (; index < listed.length && bytes <= maxBytes; index += 1) {
+    const { inside, links: found } = splitByLinks(repoRoot, [listed[index]], leadsOut);
+    found.forEach((link) => links.add(link));
+    // splitByLinks keeps deleted files, which have nothing to read.
+    for (const file of inside.filter((entry) => leadsOut.get(entry) === "in")) {
+      shown.push(fenceFileName(file));
+      bytes += Buffer.byteLength(file) + 1;
+    }
+  }
+  for (const file of listed.slice(index)) {
+    const top = file.includes("/") ? `${file.split("/")[0]}/` : "(repository root)";
+    const { inside, links: found } = splitByLinks(repoRoot, [file.split("/")[0]], leadsOut);
+    found.forEach((link) => links.add(link));
+    if (inside.length) {
+      rest.set(top, (rest.get(top) ?? 0) + 1);
+    }
+  }
+  const more = [...rest.values()].reduce((sum, count) => sum + count, 0);
+  const lines = [
+    "<repository_files>",
+    `The files in the repository at ${repoRoot} that git tracks or would add (ignored files are left out), relative to that folder. Open the ones you need by absolute path.`,
+    ...shown
+  ];
+  if (more) {
+    lines.push(
+      `...and ${more} more, not listed to save space: ${[...rest].map(([folder, count]) => `${fenceFileName(folder)} (${count})`).join(", ")}. Look for their paths in files that refer to them.`
+    );
+  }
+  if (links.size) {
+    lines.push(`Links that lead out of the repository, which cannot be opened: ${[...links].sort().map(fenceFileName).join(", ")}`);
+  }
+  lines.push("</repository_files>");
+  return lines.join("\n");
+}
