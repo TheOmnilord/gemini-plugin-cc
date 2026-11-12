@@ -86,7 +86,7 @@ function usage() {
     "  cancel [job-id] [--json]",
     "  resume-candidate [--json]",
     "",
-    "Common: --cwd <dir> (-C). Models: pro, argon, carbon, flash, flash-lite, auto or a full model id (/gemini:setup lists them).",
+    "Common: --cwd <dir> (-C). Models: pro, hydrogen, argon, carbon, flash, flash-lite, orchestrator, auto or a full model id (/gemini:setup lists them).",
     "Backend: Antigravity CLI (agy) by default; GEMINI_COMPANION_BACKEND=gemini-cli selects the Gemini CLI."
   ].join("\n");
 }
@@ -118,9 +118,9 @@ function workspaceRootFor(cwd) {
 }
 
 // Adversarial reviews default to pro: in trials on this plugin's own changes,
-// Flash approved a diff in which Gemini 3.1 Pro, the model Argon replaced,
-// found a real problem. With agy, pro is gemini-4-argon-high, the default for
-// every command anyway; with the Gemini CLI it picks Pro over auto routing.
+// Flash approved a diff in which Gemini 3.1 Pro found a real problem, and
+// gemini-4-hydrogen-xhigh found more than any other model. With agy, pro is
+// gemini-4-hydrogen-xhigh; with the Gemini CLI it picks Pro over auto routing.
 const ADVERSARIAL_REVIEW_MODEL = "pro";
 
 // The model for a command: --model, then GEMINI_COMPANION_ADVERSARIAL_MODEL for
@@ -232,7 +232,7 @@ async function inlinePages(request) {
     return {};
   }
   const pages = await fetchPages(request.inlineUrls, { purpose: "the request" });
-  return { prompt: `${request.prompt.trimEnd()}\n\n${referenceBlock(pages, { review: false })}\n` };
+  return { prompt: `${request.prompt.trimEnd()}\n\n${referenceBlock(pages, { review: false })}\n`, pages };
 }
 
 // Returns null when the job was cancelled (before Gemini started, or while it
@@ -281,6 +281,8 @@ async function executeJob(job, backend, request) {
       },
       onExit: (child) => activeChildren.delete(child)
     });
+    // The pages fetched for an ask or task, for its result.
+    run.pages = prepared.pages ?? [];
   } catch (error) {
     if (stopIfCancelled()) {
       return null;
@@ -529,6 +531,7 @@ async function runLiveCheck(backend, launch, model) {
       write: false,
       web: false,
       structured: false,
+      listFiles: false,
       model,
       timeoutMs: 120_000
     });
@@ -732,7 +735,7 @@ function finalizeConsult(job, backend, run) {
   // A write run lists the files Gemini edited, also when it then failed.
   const editedFiles = job.write ? backend.touchedFiles(run, job.workspaceRoot) : [];
   if (backend.isRunSuccessful(run)) {
-    const output = render.renderConsult({ job, answer: run.text, editedFiles });
+    const output = render.renderConsult({ job, answer: run.text, editedFiles, pages: run.pages ?? [] });
     finishJob(job, "completed", output, `${run.recoveredError ? "possibly incomplete: " : ""}${shorten(firstLine(run.text), 90)}`);
     return output;
   }

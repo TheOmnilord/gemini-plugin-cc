@@ -31,7 +31,10 @@ import { repositoryFilesBlock } from "./git.mjs";
 import { dataRoot } from "./jobs.mjs";
 import { killProcessTree, runCommand } from "./proc.mjs";
 
-export const DEFAULT_AGY_MODEL = "gemini-4-argon-high";
+// Gemini 4 Hydrogen (November 2026): in adversarial reviews of this plugin's
+// own 0.3.24 change, hydrogen-high found more of the real problems than
+// gemini-4-argon-high in half the time, and hydrogen-xhigh (pro) the most.
+export const DEFAULT_AGY_MODEL = "gemini-4-hydrogen-high";
 export const AGY_INSTALL_COMMAND =
   process.platform === "win32"
     ? "irm https://antigravity.google/cli/install.ps1 | iex"
@@ -48,18 +51,24 @@ export const MODEL_ALIASES = {
   "flash-high": "gemini-3.8-flash-high",
   "flash-low": "gemini-3.8-flash-low",
   "flash-lite": "gemini-3.8-flash-low",
+  hydrogen: "gemini-4-hydrogen-high",
+  "hydrogen-xhigh": "gemini-4-hydrogen-xhigh",
+  "hydrogen-medium": "gemini-4-hydrogen-medium",
+  "hydrogen-low": "gemini-4-hydrogen-low",
   carbon: "gemini-4-carbon-high",
   "carbon-medium": "gemini-4-carbon-medium",
   "carbon-low": "gemini-4-carbon-low",
   argon: "gemini-4-argon-high",
   "argon-medium": "gemini-4-argon-medium",
   "argon-low": "gemini-4-argon-low",
-  // Gemini 4 Argon replaced Gemini 3.1 Pro, and pro names it, as the default.
-  // Gemini 4 Carbon is Google's strongest model, but at its launch (agy 1.5.5,
-  // November 2026) carbon-high runs failed or timed out where Argon passed, so
-  // it is offered by alias only until it answers reliably.
-  pro: "gemini-4-argon-high",
-  "pro-low": "gemini-4-argon-low"
+  // Switches between Carbon and Hydrogen within a run; Google AI Ultra only.
+  orchestrator: "gemini-pro-orchestrator",
+  // pro names the most thorough model that answers reliably, for adversarial
+  // reviews. Gemini 4 Carbon is Google's strongest, but through agy (1.5.5 to
+  // 1.5.7) carbon-high still timed out on some requests and took minutes on
+  // others, so it is offered by alias only.
+  pro: "gemini-4-hydrogen-xhigh",
+  "pro-low": "gemini-4-hydrogen-low"
 };
 const MODEL_PATTERN = /^[A-Za-z0-9._:/-]+$/;
 const SIGNED_OUT = /please sign in|not signed in|sign in to|signed out|login required|not logged in|unauthenticated|re-?authenticate/i;
@@ -130,7 +139,7 @@ export function agyUnavailableError() {
 // for gemini-4-argon-high, gemini-4.1-argon-high over gemini-4.1-argon-low.
 // Returns the newest such model, or null. The plugin never switches by itself:
 // a new model can follow the review format differently.
-const GEMINI_MODEL = /^gemini-(\d+(?:\.\d+)*)-([a-z-]+?)(?:-(high|medium|low))?$/;
+const GEMINI_MODEL = /^gemini-(\d+(?:\.\d+)*)-([a-z-]+?)(?:-(xhigh|high|medium|low))?$/;
 export function newerGeminiModel(current, available) {
   const parse = (slug) => {
     const match = GEMINI_MODEL.exec(String(slug));
@@ -291,7 +300,7 @@ function lastLine(text) {
 // The newest agy whose behavior was checked live (npm run live-check in the
 // plugin's repository). agy updates itself, and 1.3.0 changed how it treats
 // file edits, so setup notes a newer version.
-export const AGY_CHECKED_VERSION = "1.5.5";
+export const AGY_CHECKED_VERSION = "1.5.7";
 
 function versionParts(version) {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""));
@@ -342,6 +351,7 @@ function summarizeParams(parameters) {
     return "";
   }
   const value =
+    parameters.Path ??
     parameters.TargetFile ??
     parameters.AbsolutePath ??
     parameters.DirectoryPath ??
@@ -427,11 +437,13 @@ export function runAgy(options) {
   if (options.jsonSchemaFile) {
     cliArgs.push("--json-schema", options.jsonSchemaFile);
   }
-  // A resumed conversation already has the list from its first request.
+  // Every turn gets the current list: files may have changed since the
+  // conversation began. Setup's connectivity check (listFiles: false) runs in
+  // the plugin's data folder, which may sit inside an unrelated repository.
   let files = "";
-  if (!options.resumeSessionId) {
+  if (options.listFiles !== false) {
     try {
-      files = repositoryFilesBlock(options.cwd);
+      files = repositoryFilesBlock(options.cwd, { resumed: Boolean(options.resumeSessionId) });
     } catch (error) {
       options.onLog?.(`Could not list the repository's files for Gemini: ${error.message}`);
     }

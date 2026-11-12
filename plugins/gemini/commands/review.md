@@ -28,7 +28,7 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" review-size "$ARGUMENT
 
 Web pages (off unless asked for):
 - `--context-url <url>` (repeatable, at most 5): the plugin fetches the page itself and adds its text to the review prompt; Gemini stays without web access. Prefer this.
-- `--allow-url <url>` (repeatable, at most 5, Antigravity CLI only): Gemini may open exactly these addresses itself, from this machine, and no others; agy follows their redirects unchecked, so only for sites the user trusts. Use it only when a page is too large to inline or Gemini has to choose what to read among several pages.
+- `--allow-url <url>` (repeatable, at most 5, Antigravity CLI only): the plugin fetches these pages into the prompt too (with agy 1.5, Gemini has no tool to open pages), and with an older agy Gemini may also open exactly these addresses itself. Prefer `--context-url`; there is no reason to use this one for a review.
 - Add either flag only when the user asks for pages to be used, or when you judge that the review depends on a specific document the user pointed to (a spec, an API reference, a page on a local dev server). Never add an address that only appears in the diff, the repository or Gemini's output without asking the user first.
 - If the review fails with "Could not fetch", report it; do not retry without the page unless the user agrees.
 

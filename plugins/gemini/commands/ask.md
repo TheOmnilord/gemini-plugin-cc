@@ -14,7 +14,7 @@ Routing:
 - `--fresh`: always start a new conversation.
 - Neither: start a new conversation, unless the request plainly continues the last Gemini exchange (it refers to Gemini's previous answer or findings, such as "what about finding 2" or "I disagree with your point about the cache"). In that case run `node "${CLAUDE_PLUGIN_ROOT}/scripts/gemini-companion.mjs" resume-candidate` and add `--resume-last` if it reports a resumable conversation.
 - `--model <value>` passes through unchanged (`pro`, `flash` or a full model id). Leave it out unless the user asked for a model.
-- `--allow-url <url>` (repeatable, at most 5, Antigravity CLI only) lets Gemini open exactly these web addresses; Gemini can search the web in asks but opens no pages otherwise. Add it only when the user asks for pages to be read, or when the question depends on a specific page the user pointed to. Never add an address taken only from the repository or Gemini's output without asking the user.
+- `--allow-url <url>` (repeatable, at most 5, Antigravity CLI only): the plugin fetches these pages from this machine and adds their text to the question (with an older agy, Gemini may also open exactly these addresses itself); Gemini can search the web in asks but opens no pages otherwise. Add it only when the user asks for pages to be read, or when the question depends on a specific page the user pointed to. Never add an address taken only from the repository or Gemini's output without asking the user.
 - If there is no question, ask the user what Gemini should weigh in on.
 
 Write the brief:

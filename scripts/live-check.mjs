@@ -73,8 +73,13 @@ function makeRepo(name) {
 
 const pageText = `PAGE-${token()}`;
 const requests = [];
+// Requests the plugin's own page fetch made (its user agent), not agy's.
+const pluginRequests = [];
 const server = http.createServer((request, response) => {
   requests.push(request.url);
+  if (request.headers["user-agent"] === "gemini-plugin-cc") {
+    pluginRequests.push(request.url);
+  }
   if (request.url === "/ok") {
     response.writeHead(200, { "content-type": "text/plain" }).end(pageText);
   } else if (request.url === "/other") {
@@ -190,6 +195,8 @@ const [read, write, url, review] = await Promise.all([
       "--allow-url",
       `${base}/redir`,
       steps([
+        // A step every agy can do, so the job always leaves agy's records.
+        `Read the file ${path.join(urlRepo, "README.md")}`,
         `Quote the text of the page ${base}/ok`,
         `Open the web page ${base}/other, if you have a tool that opens web pages`,
         `Open the web page ${base}/ok?x=1, if you have a tool that opens web pages`
@@ -357,12 +364,30 @@ record(
 const versionParts = (version) => (/(\d+)\.(\d+)\.(\d+)/.exec(String(version)) ?? []).slice(1).map(Number);
 const [major = 0, minor = 0] = versionParts(agyVersion);
 const reducedTools = major > 1 || (major === 1 && minor >= 5);
+// A listing, search or page tool under a name the guard does not know, which
+// a later agy could bring back renamed: the guard refuses it as unknown, but
+// the check this step stands for was not made.
+const KNOWN_TOOLS = new Set(["list_dir", "grep_search", "find_by_name", "search_web", "read_url_content"]);
+const unknownLookups = (job) =>
+  [...new Set(job.decisions.map((entry) => entry.tool))].filter(
+    (tool) => tool && !KNOWN_TOOLS.has(tool) && /list|dir|search|grep|find|glob|url|fetch|browse|web/i.test(tool)
+  );
 function notOffered(area, name, job, tools, what) {
-  if (reducedTools && !callsTo(job, tools).length) {
-    record(area, name, "INFO", `agy ${agyVersion} offers Gemini no ${what}, and Gemini made no such call`);
-    return true;
+  if (!reducedTools || callsTo(job, tools).length) {
+    return false;
   }
-  return false;
+  const unknown = unknownLookups(job);
+  if (job.code !== 0 || !job.decisions.length || unknown.length) {
+    record(
+      area,
+      name,
+      "SKIP",
+      unknown.length ? `Gemini called tools the guard does not know (${unknown.join(", ")}): agy may have renamed a tool` : "the job left no evidence"
+    );
+  } else {
+    record(area, name, "INFO", `agy ${agyVersion} offers Gemini no ${what}, and Gemini made no such call`);
+  }
+  return true;
 }
 
 finished("read", read);
@@ -484,11 +509,20 @@ if (requests.some((request) => request.startsWith("/ok?"))) {
 } else {
   pageNotOpened("url", "a listed address with an extra query is refused", url, "/ok?x=1");
 }
+// The plugin's fetch follows a listed page's redirects within the same site
+// (documented); a /target request from anything else came from agy's own tool.
+const agyRedirect = requests.filter((request) => request === "/target").length > pluginRequests.filter((request) => request === "/target").length;
 record(
   "url",
   "a listed address is followed through its redirects within the site (documented limit)",
   "INFO",
-  requests.includes("/target") ? "still true: /redir led to /target" : requests.includes("/redir") ? "no longer true: the README can be updated" : "/redir was never requested"
+  agyRedirect
+    ? "agy's own URL tool followed /redir to /target"
+    : pluginRequests.includes("/target")
+      ? "the plugin's fetch followed /redir to /target"
+      : requests.includes("/redir")
+        ? "/redir was not followed: the README can be updated"
+        : "/redir was never requested"
 );
 
 finished("review", review);
