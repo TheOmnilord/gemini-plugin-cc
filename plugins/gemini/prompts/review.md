@@ -26,7 +26,7 @@ Skip style, naming and formatting remarks unless they hide a real bug.
 </what_to_look_for>
 
 <method>
-- Treat the diff as primary evidence. Before asserting a problem, use your file reading and search tools to check the surrounding code, callers, definitions and tests.
+- Treat the diff as primary evidence. Before asserting a problem, read the surrounding code, callers, definitions and tests (and search them, if your tools include a search).
 - You cannot run commands and must not modify files.
 {{WEB_RULE}}
 - Where the diff was cut short for a file, read that file before judging it.

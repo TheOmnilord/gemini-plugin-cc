@@ -611,50 +611,100 @@ function fenceFileName(name) {
   return name.replace(/<(?=\/?repository_files)/gi, "&lt;");
 }
 
+const MAX_LISTED_FOLDERS = 40;
+
+// Where each listed path really is: "in" (a file in the repository), "out" (a
+// link that leads out of it, or a path under one; only the link is named),
+// or "missing" (deleted). Folders are checked once each, and only a link is
+// resolved; each file costs one lstat.
+function makeLocator(repoRoot) {
+  const realRoot = fs.realpathSync.native(repoRoot);
+  const folders = new Map([["", { state: "in", link: null }]]);
+  const check = (relative) => {
+    const absolute = path.join(repoRoot, relative);
+    let stat;
+    try {
+      stat = fs.lstatSync(absolute);
+    } catch {
+      return "missing";
+    }
+    return stat.isSymbolicLink() && !realPathInside(absolute, realRoot) ? "out" : "in";
+  };
+  const folder = (relative) => {
+    if (!folders.has(relative)) {
+      const parent = folder(relative.includes("/") ? relative.slice(0, relative.lastIndexOf("/")) : "");
+      const state = parent.state !== "in" ? parent.state : check(relative);
+      folders.set(relative, parent.state !== "in" ? parent : { state, link: state === "out" ? relative : null });
+    }
+    return folders.get(relative);
+  };
+  return (file) => {
+    const parent = folder(file.includes("/") ? file.slice(0, file.lastIndexOf("/")) : "");
+    if (parent.state !== "in") {
+      return parent;
+    }
+    const state = check(file);
+    return { state, link: state === "out" ? file : null };
+  };
+}
+
 // The repository's files for agy runs: agy 1.5 gives agents no folder listing
 // or file search, so Gemini opens files by the paths listed here. Tracked and
 // untracked files, without ignored ones, deleted ones, or anything behind a
 // link that leads out of the repository (git lists a linked folder's files as
-// the repository's own); only such a link's own name is listed. Past the size
-// budget the rest is counted by top-level folder. "" outside a git repository.
-export function repositoryFilesBlock(cwd, { maxBytes = MAX_FILE_LIST_BYTES } = {}) {
+// the repository's own); only such a link's own name is listed. Shallower
+// files come first, so every folder shows before deeper ones are cut; past the
+// size budget the rest is counted by folder. Outside a git repository there
+// is nothing to list, and the block says so.
+export function repositoryFilesBlock(cwd, { maxBytes = MAX_FILE_LIST_BYTES, resumed = false } = {}) {
   const repoRoot = cwd ? getRepoRoot(cwd) : null;
   if (!repoRoot) {
-    return "";
+    return [
+      "<repository_files>",
+      `${cwd ? `${cwd} is not` : "This run is not"} in a git repository, so there is no list of its files and you have no folder listing or file search. Open files by the paths the request names, or ask for the paths you need.`,
+      "</repository_files>"
+    ].join("\n");
   }
-  const listed = [...new Set(pathList(gitChecked(repoRoot, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"])))].sort();
-  const leadsOut = new Map();
-  const shown = [];
+  const locate = makeLocator(repoRoot);
+  const depth = (file) => file.split("/").length;
+  const files = [];
   const links = new Set();
-  const rest = new Map();
+  for (const file of new Set(pathList(gitChecked(repoRoot, ["ls-files", "--cached", "--others", "--exclude-standard", "-z"])))) {
+    const { state, link } = locate(file);
+    if (state === "in") {
+      files.push(file);
+    } else if (state === "out") {
+      links.add(link);
+    }
+  }
+  files.sort((a, b) => depth(a) - depth(b) || (a < b ? -1 : a > b ? 1 : 0));
   let bytes = 0;
-  let index = 0;
-  for (; index < listed.length && bytes <= maxBytes; index += 1) {
-    const { inside, links: found } = splitByLinks(repoRoot, [listed[index]], leadsOut);
-    found.forEach((link) => links.add(link));
-    // splitByLinks keeps deleted files, which have nothing to read.
-    for (const file of inside.filter((entry) => leadsOut.get(entry) === "in")) {
-      shown.push(fenceFileName(file));
-      bytes += Buffer.byteLength(file) + 1;
+  let count = 0;
+  while (count < files.length && bytes + Buffer.byteLength(files[count]) + 1 <= maxBytes) {
+    bytes += Buffer.byteLength(files[count]) + 1;
+    count += 1;
+  }
+  // The rest are at least as deep as the first one left out: count them by
+  // the folder at the depth above it.
+  const rest = new Map();
+  if (count < files.length) {
+    const level = Math.max(1, depth(files[count]) - 1);
+    for (const file of files.slice(count)) {
+      const folder = `${file.split("/").slice(0, level).join("/")}/`;
+      rest.set(folder, (rest.get(folder) ?? 0) + 1);
     }
   }
-  for (const file of listed.slice(index)) {
-    const top = file.includes("/") ? `${file.split("/")[0]}/` : "(repository root)";
-    const { inside, links: found } = splitByLinks(repoRoot, [file.split("/")[0]], leadsOut);
-    found.forEach((link) => links.add(link));
-    if (inside.length) {
-      rest.set(top, (rest.get(top) ?? 0) + 1);
-    }
-  }
-  const more = [...rest.values()].reduce((sum, count) => sum + count, 0);
   const lines = [
     "<repository_files>",
-    `The files in the repository at ${repoRoot} that git tracks or would add (ignored files are left out), relative to that folder. Open the ones you need by absolute path.`,
-    ...shown
+    `${resumed ? "The current list of files, which may have changed since earlier in this conversation: those" : "The files"} in the repository at ${repoRoot} that git tracks or would add (ignored files are left out), relative to that folder. Open the ones you need by absolute path.`,
+    ...files.slice(0, count).sort().map(fenceFileName)
   ];
-  if (more) {
+  if (rest.size) {
+    const folders = [...rest].sort(([a], [b]) => (a < b ? -1 : 1));
+    const named = folders.slice(0, MAX_LISTED_FOLDERS).map(([folder, number]) => `${fenceFileName(folder)} (${number})`);
+    const others = folders.length - named.length;
     lines.push(
-      `...and ${more} more, not listed to save space: ${[...rest].map(([folder, count]) => `${fenceFileName(folder)} (${count})`).join(", ")}. Look for their paths in files that refer to them.`
+      `...and ${files.length - count} more, not listed to save space: ${named.join(", ")}${others ? `, and files in ${others} other folders` : ""}. Look for their paths in files that refer to them.`
     );
   }
   if (links.size) {

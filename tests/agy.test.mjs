@@ -10,7 +10,8 @@ import { pathToFileURL } from "node:url";
 
 import { agyTouchedFiles, newerGeminiModel, plainFileLinks, resolveAgyModel } from "../plugins/gemini/scripts/lib/agy.mjs";
 import { installedPluginVersion, isNewerVersion } from "../plugins/gemini/scripts/lib/release.mjs";
-import { argAfter, captures, companion, companionAsync, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
+import { argAfter, captures, companion, companionAsync, git as execGit, makeRepo, ROOT, tempDir, waitFor } from "./helpers.mjs";
+import { repositoryFilesBlock } from "../plugins/gemini/scripts/lib/git.mjs";
 
 const FAKE_AGY = path.join(ROOT, "tests", "fixtures", "fake-agy.mjs");
 const FAKE_GEMINI = path.join(ROOT, "tests", "fixtures", "fake-gemini.mjs");
@@ -47,10 +48,16 @@ function conversationOf(repo, env, kind) {
 }
 
 test("maps model aliases to agy models", () => {
-  assert.equal(resolveAgyModel(""), "gemini-4-argon-high");
-  assert.equal(resolveAgyModel("auto"), "gemini-4-argon-high");
+  assert.equal(resolveAgyModel(""), "gemini-4-hydrogen-high");
+  assert.equal(resolveAgyModel("auto"), "gemini-4-hydrogen-high");
+  assert.equal(resolveAgyModel("hydrogen"), "gemini-4-hydrogen-high");
+  assert.equal(resolveAgyModel("hydrogen-xhigh"), "gemini-4-hydrogen-xhigh");
+  assert.equal(resolveAgyModel("hydrogen-low"), "gemini-4-hydrogen-low");
+  assert.equal(resolveAgyModel("pro-low"), "gemini-4-hydrogen-low");
+  assert.equal(resolveAgyModel("orchestrator"), "gemini-pro-orchestrator");
+  assert.equal(resolveAgyModel("argon"), "gemini-4-argon-high");
   assert.equal(resolveAgyModel("flash"), "gemini-3.8-flash-medium");
-  assert.equal(resolveAgyModel("pro"), "gemini-4-argon-high");
+  assert.equal(resolveAgyModel("pro"), "gemini-4-hydrogen-xhigh");
   assert.equal(resolveAgyModel("argon-medium"), "gemini-4-argon-medium");
   assert.equal(resolveAgyModel("carbon"), "gemini-4-carbon-high");
   assert.equal(resolveAgyModel("carbon-medium"), "gemini-4-carbon-medium");
@@ -80,14 +87,14 @@ test("review runs through agy read-only, without web, with the review schema", (
   assert.match(result.stdout, /The @param doc/);
   assert.match(result.stdout, /\*\*Unverified assumptions:\*\*\n- Callers may pass an empty list\./);
   assert.equal(result.stdout.match(/Unverified assumptions/g).length, 1);
-  assert.match(result.stdout, /gemini-4-argon-high · .* · 2,100 in \/ 42 out tokens/);
+  assert.match(result.stdout, /gemini-4-hydrogen-high · .* · 2,100 in \/ 42 out tokens/);
 
   const [call] = captures(capture);
   assert.equal(argAfter(call.args, "-p"), "");
   assert.equal(argAfter(call.args, "--input-format"), "stream-json");
   assert.equal(argAfter(call.args, "--output-format"), "stream-json");
   assert.equal(argAfter(call.args, "--agent"), "gemini-cc");
-  assert.equal(argAfter(call.args, "--model"), "gemini-4-argon-high");
+  assert.equal(argAfter(call.args, "--model"), "gemini-4-hydrogen-high");
   assert.ok(argAfter(call.args, "--json-schema").endsWith(path.join("schemas", "review-output.schema.json")));
   assert.ok(call.args.includes("--disable-slash-commands"));
   assert.equal(call.env.mode, "read-only");
@@ -110,14 +117,14 @@ test("adversarial reviews default to Pro unless a model is named", () => {
   const repo = makeRepo();
   fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
   const runs = [
-    [["adversarial-review"], {}, "gemini-4-argon-high"],
+    [["adversarial-review"], {}, "gemini-4-hydrogen-xhigh"],
     [["adversarial-review", "--model", "flash-low"], {}, "gemini-3.8-flash-low"],
     [["adversarial-review"], { GEMINI_COMPANION_MODEL: "flash" }, "gemini-3.8-flash-medium"],
-    [["review"], {}, "gemini-4-argon-high"],
+    [["review"], {}, "gemini-4-hydrogen-high"],
     // GEMINI_COMPANION_ADVERSARIAL_MODEL covers adversarial reviews only, ahead of GEMINI_COMPANION_MODEL.
     [["adversarial-review"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high", GEMINI_COMPANION_MODEL: "flash" }, "gemini-3.8-flash-high"],
-    [["adversarial-review", "--model", "pro-low"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-4-argon-low"],
-    [["review"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-4-argon-high"]
+    [["adversarial-review", "--model", "pro-low"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-4-hydrogen-low"],
+    [["review"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-4-hydrogen-high"]
   ];
   for (const [args, extra, model] of runs) {
     const { env, capture } = makeEnv(extra);
@@ -240,7 +247,7 @@ test("task --write lets agy edit, lists the files and cleans up file links", () 
 
   const [call] = captures(capture);
   assert.equal(call.env.mode, "write");
-  assert.equal(argAfter(call.args, "--model"), "gemini-4-argon-high");
+  assert.equal(argAfter(call.args, "--model"), "gemini-4-hydrogen-xhigh");
   assert.equal(argAfter(call.args, "--json-schema"), null);
   // agy 1.3 checks edits itself; accept-edits lets those inside the workspace through.
   assert.equal(argAfter(call.args, "--mode"), "accept-edits");
@@ -313,14 +320,16 @@ test("the private agy profile carries the agent, the guard and the deny rules", 
 });
 
 test("setup reports agy, the sign-in and the models, and runs a live check", () => {
-  const { env } = makeEnv();
+  const { env, capture } = makeEnv();
   const result = companion(["setup", "--check", "--json"], { cwd: os.tmpdir(), env });
   assert.equal(result.status, 0, result.stderr);
+  // The check runs in the plugin's data folder, which may sit inside an unrelated repository.
+  assert.doesNotMatch(captures(capture)[0].message, /<repository_files>/);
   const report = JSON.parse(result.stdout);
   assert.equal(report.backend, "agy");
   assert.equal(report.agy.version, "1.2.11");
   assert.equal(report.signIn.signedIn, true);
-  assert.equal(report.model.resolved, "gemini-4-argon-high");
+  assert.equal(report.model.resolved, "gemini-4-hydrogen-high");
   assert.equal(report.model.available, true);
   assert.equal(report.live.ok, true);
   assert.equal(report.ready, true);
@@ -335,16 +344,16 @@ test("setup reports agy, the sign-in and the models, and runs a live check", () 
 test("setup shows the adversarial-review model and newer models on the account", () => {
   const setup = (extra) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv(extra).env }).stdout;
   const today = setup({});
-  assert.match(today, /\*\*Adversarial reviews:\*\* `gemini-4-argon-high` \(default: pro\)/);
+  assert.match(today, /\*\*Adversarial reviews:\*\* `gemini-4-hydrogen-xhigh` \(default: pro\)/);
   assert.doesNotMatch(today, /Newer models|To try a newer model/);
 
-  const newer = { FAKE_AGY_EXTRA_MODELS: "gemini-4.1-argon-low,gemini-4.1-argon-high,gemini-3.10-flash-medium" };
+  const newer = { FAKE_AGY_EXTRA_MODELS: "gemini-4.1-hydrogen-low,gemini-4.1-hydrogen-high,gemini-4.1-hydrogen-xhigh,gemini-3.10-flash-medium" };
   const later = setup(newer);
-  assert.match(later, /\*\*Newer models on this account:\*\* `gemini-4\.1-argon-high` \(newer than `gemini-4-argon-high`\)\n/);
+  assert.match(later, /\*\*Newer models on this account:\*\* `gemini-4\.1-hydrogen-high` \(newer than `gemini-4-hydrogen-high`\), `gemini-4\.1-hydrogen-xhigh` \(newer than `gemini-4-hydrogen-xhigh`\)\n/);
   assert.match(later, /To try a newer model, pass `--model <model>`/);
-  // Every model in use is checked: here Flash for most commands, Argon for adversarial reviews.
+  // Every model in use is checked: here Flash for most commands, Hydrogen xhigh for adversarial reviews.
   const flash = setup({ ...newer, GEMINI_COMPANION_MODEL: "flash", GEMINI_COMPANION_ADVERSARIAL_MODEL: "pro" });
-  assert.match(flash, /\*\*Newer models on this account:\*\* `gemini-3\.10-flash-medium` \(newer than `gemini-3\.8-flash-medium`\), `gemini-4\.1-argon-high` \(newer than `gemini-4-argon-high`\)/);
+  assert.match(flash, /\*\*Newer models on this account:\*\* `gemini-3\.10-flash-medium` \(newer than `gemini-3\.8-flash-medium`\), `gemini-4\.1-hydrogen-xhigh` \(newer than `gemini-4-hydrogen-xhigh`\)/);
 
   const missing = setup({ GEMINI_COMPANION_ADVERSARIAL_MODEL: "gemini-9-pro-high" });
   assert.match(missing, /\*\*Adversarial reviews:\*\* `gemini-9-pro-high` \(from GEMINI_COMPANION_ADVERSARIAL_MODEL\), not offered to this account/);
@@ -361,12 +370,17 @@ test("newer Gemini models are found by line and version", () => {
   assert.equal(newerGeminiModel("gemini-3.8-flash-medium", account), "gemini-3.10-flash-low");
   assert.equal(newerGeminiModel("gemini-4.1-argon-high", account), null);
   assert.equal(newerGeminiModel("claude-opus-5-5-high", account), null);
+  // xhigh is an effort level, not part of the line.
+  const hydrogen = ["gemini-4-hydrogen-high", "gemini-4.1-hydrogen-high", "gemini-4.1-hydrogen-xhigh", "gemini-4.2-argon-xhigh"];
+  assert.equal(newerGeminiModel("gemini-4-hydrogen-xhigh", hydrogen), "gemini-4.1-hydrogen-xhigh");
+  assert.equal(newerGeminiModel("gemini-4-hydrogen-high", hydrogen), "gemini-4.1-hydrogen-high");
 });
 
 test("setup notes an agy newer than the last version checked", () => {
   const check = (version) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv({ FAKE_AGY_VERSION: version }).env }).stdout;
-  assert.match(check("1.5.6"), /\*\*Note:\*\* agy 1\.5\.6 is newer than 1\.5\.5, the last version this plugin was checked against/);
+  assert.match(check("1.5.8"), /\*\*Note:\*\* agy 1\.5\.8 is newer than 1\.5\.7, the last version this plugin was checked against/);
   assert.match(check("2.0.0"), /agy 2\.0\.0 is newer than/);
+  assert.doesNotMatch(check("1.5.7"), /newer than/);
   assert.doesNotMatch(check("1.5.5"), /newer than/);
   assert.doesNotMatch(check("1.4.7"), /newer than/);
   assert.doesNotMatch(check("1.4.0"), /newer than/);
@@ -634,6 +648,7 @@ test("--allow-url pages are fetched into the prompt and handed to the guard, for
     assert.ok(review.stdout.includes(`**Reference pages:** ${base}/spec, ${base}/`), review.stdout);
     const ask = await companionAsync(["ask", "--allow-url", `${base}/spec`], { cwd: repo, env, input: "What does the spec say?" });
     assert.equal(ask.status, 0, ask.stderr);
+    assert.ok(ask.stdout.includes(`**Reference pages:** ${base}/spec\n`), ask.stdout);
 
     const [reviewCall, askCall] = captures(capture);
     assert.deepEqual(JSON.parse(reviewCall.env.webAllow), [`${base}/spec`, `${base}/`]);
@@ -688,9 +703,47 @@ test("a new conversation lists the repository's files; links out and ignored fil
   assert.match(block, /Links that lead out of the repository, which cannot be opened: linked/);
   assert.ok(first.message.indexOf("<repository_files>") < first.message.indexOf("answer the request now"));
 
-  // A resumed conversation already has the list.
+  // A follow-up gets the current list: files may have changed since.
+  fs.writeFileSync(path.join(repo, "src", "later.js"), "");
   assert.equal(companion(["ask", "--resume-last"], { cwd: repo, env, input: "And its callers?" }).status, 0);
-  assert.doesNotMatch(captures(capture).at(-1).message, /<repository_files>/);
+  const followUp = captures(capture).at(-1).message;
+  assert.match(followUp, /<repository_files>\nThe current list of files, which may have changed/);
+  assert.ok(followUp.includes("\nsrc/later.js\n"), followUp);
+});
+
+test("the file list skips deleted files and nested links, lists shallow files first and counts the rest", () => {
+  const repo = makeRepo();
+  const outside = tempDir("gemini-cc-outside-");
+  fs.writeFileSync(path.join(outside, "hidden-name.txt"), "x");
+  fs.mkdirSync(path.join(repo, "a", "b", "c"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "z"));
+  fs.writeFileSync(path.join(repo, "z", "top.js"), "");
+  for (let index = 0; index < 30; index += 1) {
+    fs.writeFileSync(path.join(repo, "a", "b", "c", `deep-${String(index).padStart(2, "0")}.js`), "");
+  }
+  fs.writeFileSync(path.join(repo, "gone.js"), "");
+  execGit(repo, "add", "-A");
+  execGit(repo, "commit", "-qm", "files");
+  fs.rmSync(path.join(repo, "gone.js"));
+  // A link out of the repository, nested two folders down.
+  fs.symlinkSync(outside, path.join(repo, "a", "b", "linked"), "junction");
+
+  const full = repositoryFilesBlock(repo);
+  assert.doesNotMatch(full, /gone\.js|hidden-name/);
+  assert.match(full, /Links that lead out of the repository, which cannot be opened: a\/b\/linked/);
+
+  // A small budget keeps the shallow files, including z/top.js after a/, and counts the deep ones.
+  const small = repositoryFilesBlock(repo, { maxBytes: 200 });
+  const lines = small.split("\n");
+  for (const file of ["app.js", "z/top.js"]) {
+    assert.ok(lines.includes(file), `${file} missing from:\n${small}`);
+  }
+  assert.match(small, /\.\.\.and \d+ more, not listed to save space: a\/b\/c\/ \(\d+\)\./);
+  assert.doesNotMatch(small, /hidden-name|gone\.js/);
+  assert.match(small, /a\/b\/linked/);
+
+  // Outside a git repository the block says there is no list.
+  assert.match(repositoryFilesBlock(tempDir("gemini-cc-plain-")), /is not in a git repository, so there is no list/);
 });
 
 test("edits made with agy 1.5's write_file and edit_file are reported", () => {

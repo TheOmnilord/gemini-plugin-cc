@@ -142,9 +142,12 @@ export function renderReview({ label, context, focus, review, answer, job, pages
   return `${lines.join("\n")}\n`;
 }
 
-export function renderConsult({ job, answer, editedFiles }) {
+export function renderConsult({ job, answer, editedFiles, pages = [] }) {
   const heading = job.kind === "ask" ? "Gemini's answer" : job.write ? "Gemini task result (write mode)" : "Gemini task result";
   const lines = [`# ${heading}`, "", unescaper(job)(answer.trim()), ""];
+  if (pages.length) {
+    lines.push(`**Reference pages:** ${pages.map((page) => `${page.url}${page.truncated ? " (cut to fit)" : ""}`).join(", ")}`, "");
+  }
   if (job.write) {
     lines.push(
       editedFiles.length ? `**Files Gemini edited:**\n${editedFiles.map((file) => `- \`${file}\``).join("\n")}` : "Gemini did not edit any files.",
