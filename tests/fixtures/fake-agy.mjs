@@ -23,6 +23,7 @@ const MODELS = [
   "gemini-4-hydrogen-medium",
   "gemini-4-hydrogen-low",
   "gemini-pro-orchestrator",
+  "gemini-pro-orchestrator-argon",
   "gemini-4-argon-high",
   "gemini-4-argon-medium",
   "gemini-4-argon-low",
