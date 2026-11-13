@@ -55,6 +55,7 @@ test("maps model aliases to agy models", () => {
   assert.equal(resolveAgyModel("hydrogen-low"), "gemini-4-hydrogen-low");
   assert.equal(resolveAgyModel("pro-low"), "gemini-4-hydrogen-low");
   assert.equal(resolveAgyModel("orchestrator"), "gemini-pro-orchestrator");
+  assert.equal(resolveAgyModel("orchestrator-argon"), "gemini-pro-orchestrator-argon");
   assert.equal(resolveAgyModel("argon"), "gemini-4-argon-high");
   assert.equal(resolveAgyModel("flash"), "gemini-3.8-flash-medium");
   assert.equal(resolveAgyModel("pro"), "gemini-4-hydrogen-xhigh");
@@ -378,8 +379,9 @@ test("newer Gemini models are found by line and version", () => {
 
 test("setup notes an agy newer than the last version checked", () => {
   const check = (version) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv({ FAKE_AGY_VERSION: version }).env }).stdout;
-  assert.match(check("1.5.8"), /\*\*Note:\*\* agy 1\.5\.8 is newer than 1\.5\.7, the last version this plugin was checked against/);
+  assert.match(check("1.5.9"), /\*\*Note:\*\* agy 1\.5\.9 is newer than 1\.5\.8, the last version this plugin was checked against/);
   assert.match(check("2.0.0"), /agy 2\.0\.0 is newer than/);
+  assert.doesNotMatch(check("1.5.8"), /newer than/);
   assert.doesNotMatch(check("1.5.7"), /newer than/);
   assert.doesNotMatch(check("1.5.5"), /newer than/);
   assert.doesNotMatch(check("1.4.7"), /newer than/);

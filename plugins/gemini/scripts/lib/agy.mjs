@@ -61,8 +61,11 @@ export const MODEL_ALIASES = {
   argon: "gemini-4-argon-high",
   "argon-medium": "gemini-4-argon-medium",
   "argon-low": "gemini-4-argon-low",
-  // Switches between Carbon and Hydrogen within a run; Google AI Ultra only.
+  // Orchestrators hand parts of a run to other models; Google AI Ultra only.
+  // agy 1.5.8 names gemini-pro-orchestrator "Orchestrator (Carbon)" and adds
+  // an Argon-led one.
   orchestrator: "gemini-pro-orchestrator",
+  "orchestrator-argon": "gemini-pro-orchestrator-argon",
   // pro names the most thorough model that answers reliably, for adversarial
   // reviews. Gemini 4 Carbon is Google's strongest, but through agy (1.5.5 to
   // 1.5.7) carbon-high still timed out on some requests and took minutes on
@@ -300,7 +303,7 @@ function lastLine(text) {
 // The newest agy whose behavior was checked live (npm run live-check in the
 // plugin's repository). agy updates itself, and 1.3.0 changed how it treats
 // file edits, so setup notes a newer version.
-export const AGY_CHECKED_VERSION = "1.5.7";
+export const AGY_CHECKED_VERSION = "1.5.8";
 
 function versionParts(version) {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""));

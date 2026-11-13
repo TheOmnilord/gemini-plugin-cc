@@ -88,14 +88,15 @@ The default is `gemini-4-hydrogen-high` for every command, and `/gemini:adversar
 | `pro-low`, `hydrogen-low` | `gemini-4-hydrogen-low` |
 | `argon`, `argon-medium`, `argon-low` | `gemini-4-argon-high`, `gemini-4-argon-medium`, `gemini-4-argon-low` |
 | `carbon`, `carbon-medium`, `carbon-low` | `gemini-4-carbon-high`, `gemini-4-carbon-medium`, `gemini-4-carbon-low` |
-| `orchestrator` | `gemini-pro-orchestrator` |
+| `orchestrator` | `gemini-pro-orchestrator` (Carbon-led) |
+| `orchestrator-argon` | `gemini-pro-orchestrator-argon` |
 | `flash` | `gemini-3.8-flash-medium` |
 | `flash-high`, `flash-low` | `gemini-3.8-flash-high`, `gemini-3.8-flash-low` |
 | `flash-lite` | `gemini-3.8-flash-low` |
 
-Gemini 4 Carbon is Google's strongest model, but through `agy` 1.5.5 to 1.5.7 `carbon-high` still timed out on some requests and took minutes on others (an adversarial review: over 10 minutes), so it is not a default: pass `--model carbon` with a longer `--timeout-min` to use it. The orchestrator switches between Carbon and Hydrogen within a run, for Google AI Ultra accounts; it took 3 to 4 times as long as `hydrogen-high` in trials. Any other model id from `agy models` works too; `/gemini:setup` lists the models your account offers.
+Gemini 4 Carbon is Google's strongest model, but through `agy` 1.5.5 to 1.5.7 `carbon-high` still timed out on some requests and took minutes on others (an adversarial review: over 10 minutes), so it is not a default: pass `--model carbon` with a longer `--timeout-min` to use it. The orchestrators, for Google AI Ultra accounts, hand parts of a run to other models; `agy` names them Orchestrator (Carbon) and, since 1.5.8, Orchestrator (Argon). In the same adversarial reviews on `agy` 1.5.8, the Carbon-led one found about as much as `hydrogen-xhigh` but took 7 to 10 minutes, and the Argon-led one found less than `hydrogen-high` in twice the time, so neither is a default. Any other model id from `agy models` works too; `/gemini:setup` lists the models your account offers.
 
-The defaults and aliases name fixed models, so a new Gemini release is not used until a plugin update moves them: a new model can follow the review format differently. `/gemini:setup` names any newer flash, hydrogen, argon or carbon model your account offers than the ones in use, and you can use one right away by its id. With the Gemini CLI, `pro` and `flash` are the CLI's own aliases and follow its updates; the `hydrogen`, `argon`, `carbon` and `orchestrator` aliases are for the Antigravity CLI only.
+The defaults and aliases name fixed models, so a new Gemini release is not used until a plugin update moves them: a new model can follow the review format differently. `/gemini:setup` names any newer flash, hydrogen, argon or carbon model your account offers than the ones in use, and you can use one right away by its id. With the Gemini CLI, `pro` and `flash` are the CLI's own aliases and follow its updates; the `hydrogen`, `argon`, `carbon` and orchestrator aliases are for the Antigravity CLI only.
 
 ## Gemini CLI backend (opt-in)
 
