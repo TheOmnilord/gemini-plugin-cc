@@ -86,7 +86,7 @@ function usage() {
     "  cancel [job-id] [--json]",
     "  resume-candidate [--json]",
     "",
-    "Common: --cwd <dir> (-C). Models: pro, hydrogen, argon, carbon, flash, flash-lite, orchestrator, orchestrator-argon, auto or a full model id (/gemini:setup lists them).",
+    "Common: --cwd <dir> (-C). Models: pro, hydrogen, neon, argon, carbon, flash, flash-lite, orchestrator, orchestrator-argon, orchestrator-neon, auto or a full model id (/gemini:setup lists them).",
     "Backend: Antigravity CLI (agy) by default; GEMINI_COMPANION_BACKEND=gemini-cli selects the Gemini CLI."
   ].join("\n");
 }
@@ -119,8 +119,8 @@ function workspaceRootFor(cwd) {
 
 // Adversarial reviews default to pro: in trials on this plugin's own changes,
 // Flash approved a diff in which Gemini 3.1 Pro found a real problem, and
-// gemini-4-hydrogen-xhigh found more than any other model. With agy, pro is
-// gemini-4-hydrogen-xhigh; with the Gemini CLI it picks Pro over auto routing.
+// gemini-4-neon-xhigh found more than any other model. With agy, pro is
+// gemini-4-neon-xhigh; with the Gemini CLI it picks Pro over auto routing.
 const ADVERSARIAL_REVIEW_MODEL = "pro";
 
 // The model for a command: --model, then GEMINI_COMPANION_ADVERSARIAL_MODEL for

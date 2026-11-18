@@ -31,10 +31,11 @@ import { repositoryFilesBlock } from "./git.mjs";
 import { dataRoot } from "./jobs.mjs";
 import { killProcessTree, runCommand } from "./proc.mjs";
 
-// Gemini 4 Hydrogen (November 2026): in adversarial reviews of this plugin's
-// own 0.3.24 change, hydrogen-high found more of the real problems than
-// gemini-4-argon-high in half the time, and hydrogen-xhigh (pro) the most.
-export const DEFAULT_AGY_MODEL = "gemini-4-hydrogen-high";
+// Gemini 4 Neon (agy 1.5.11, November 2026): in adversarial reviews of this
+// plugin's own 0.3.24 change, neon-high found 8 and 9 of the confirmed
+// problems against 0 and 6 for gemini-4-hydrogen-high, in about twice the
+// time, and neon-xhigh (pro) the most.
+export const DEFAULT_AGY_MODEL = "gemini-4-neon-high";
 export const AGY_INSTALL_COMMAND =
   process.platform === "win32"
     ? "irm https://antigravity.google/cli/install.ps1 | iex"
@@ -61,17 +62,24 @@ export const MODEL_ALIASES = {
   argon: "gemini-4-argon-high",
   "argon-medium": "gemini-4-argon-medium",
   "argon-low": "gemini-4-argon-low",
+  // Gemini 4 Neon appeared in agy 1.5.11 (not in its changelog).
+  neon: "gemini-4-neon-high",
+  "neon-xhigh": "gemini-4-neon-xhigh",
+  "neon-medium": "gemini-4-neon-medium",
+  "neon-low": "gemini-4-neon-low",
   // Orchestrators hand parts of a run to other models; Google AI Ultra only.
   // agy 1.5.8 names gemini-pro-orchestrator "Orchestrator (Carbon)" and adds
-  // an Argon-led one.
+  // an Argon-led one; 1.5.11 adds a Neon-led one.
   orchestrator: "gemini-pro-orchestrator",
   "orchestrator-argon": "gemini-pro-orchestrator-argon",
+  "orchestrator-neon": "gemini-pro-orchestrator-neon",
   // pro names the most thorough model that answers reliably, for adversarial
   // reviews. Gemini 4 Carbon is Google's strongest, but through agy (1.5.5 to
   // 1.5.7) carbon-high still timed out on some requests and took minutes on
-  // others, so it is offered by alias only.
-  pro: "gemini-4-hydrogen-xhigh",
-  "pro-low": "gemini-4-hydrogen-low"
+  // others, so it is offered by alias only. The Neon-led orchestrator found
+  // no more than neon-xhigh and was slower.
+  pro: "gemini-4-neon-xhigh",
+  "pro-low": "gemini-4-neon-low"
 };
 const MODEL_PATTERN = /^[A-Za-z0-9._:/-]+$/;
 const SIGNED_OUT = /please sign in|not signed in|sign in to|signed out|login required|not logged in|unauthenticated|re-?authenticate/i;
@@ -303,7 +311,7 @@ function lastLine(text) {
 // The newest agy whose behavior was checked live (npm run live-check in the
 // plugin's repository). agy updates itself, and 1.3.0 changed how it treats
 // file edits, so setup notes a newer version.
-export const AGY_CHECKED_VERSION = "1.5.8";
+export const AGY_CHECKED_VERSION = "1.5.11";
 
 function versionParts(version) {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(version ?? ""));

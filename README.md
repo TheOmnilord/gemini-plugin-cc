@@ -78,25 +78,27 @@ Reviews run without web access, so Gemini judges a change from the diff and the 
 
 ## Models
 
-The default is `gemini-4-hydrogen-high` for every command, and `/gemini:adversarial-review` uses `pro`, which is `gemini-4-hydrogen-xhigh`. In adversarial reviews of this plugin's own 0.3.24 change (two runs each), `hydrogen-high` found more of the real problems than `gemini-4-argon-high` in half the time, and `hydrogen-xhigh` found the most at about Argon's speed. Flash is lighter on your quota, but in an earlier trial it approved a diff in which Gemini 3.1 Pro found a real problem. Pass `--model` to a command, set `GEMINI_COMPANION_MODEL` to change it for every command, or set `GEMINI_COMPANION_ADVERSARIAL_MODEL` to change it for adversarial reviews only:
+The default is `gemini-4-neon-high` for every command, and `/gemini:adversarial-review` uses `pro`, which is `gemini-4-neon-xhigh`. In adversarial reviews of this plugin's own 0.3.24 change on `agy` 1.5.11 (two runs each), `neon-high` found 8 and 9 of the confirmed problems in about 7 minutes and `neon-xhigh` 10 and 11 in 9 to 11 minutes, against 0 and 6 for `hydrogen-high` (3 to 4 minutes; the run that found none noticed three but approved the change) and 6 and 6 for `hydrogen-xhigh` (5 to 6 minutes). Pass `--model hydrogen` when speed matters more than thoroughness. Flash is lighter on your quota, but in an earlier trial it approved a diff in which Gemini 3.1 Pro found a real problem. Pass `--model` to a command, set `GEMINI_COMPANION_MODEL` to change it for every command, or set `GEMINI_COMPANION_ADVERSARIAL_MODEL` to change it for adversarial reviews only:
 
 | Alias | Model |
 | --- | --- |
-| `hydrogen`, `auto` | `gemini-4-hydrogen-high` |
-| `pro`, `hydrogen-xhigh` | `gemini-4-hydrogen-xhigh` |
-| `hydrogen-medium` | `gemini-4-hydrogen-medium` |
-| `pro-low`, `hydrogen-low` | `gemini-4-hydrogen-low` |
+| `neon`, `auto` | `gemini-4-neon-high` |
+| `pro`, `neon-xhigh` | `gemini-4-neon-xhigh` |
+| `neon-medium` | `gemini-4-neon-medium` |
+| `pro-low`, `neon-low` | `gemini-4-neon-low` |
+| `hydrogen`, `hydrogen-xhigh`, `hydrogen-medium`, `hydrogen-low` | `gemini-4-hydrogen-high`, `gemini-4-hydrogen-xhigh`, `gemini-4-hydrogen-medium`, `gemini-4-hydrogen-low` |
 | `argon`, `argon-medium`, `argon-low` | `gemini-4-argon-high`, `gemini-4-argon-medium`, `gemini-4-argon-low` |
 | `carbon`, `carbon-medium`, `carbon-low` | `gemini-4-carbon-high`, `gemini-4-carbon-medium`, `gemini-4-carbon-low` |
 | `orchestrator` | `gemini-pro-orchestrator` (Carbon-led) |
 | `orchestrator-argon` | `gemini-pro-orchestrator-argon` |
+| `orchestrator-neon` | `gemini-pro-orchestrator-neon` |
 | `flash` | `gemini-3.8-flash-medium` |
 | `flash-high`, `flash-low` | `gemini-3.8-flash-high`, `gemini-3.8-flash-low` |
 | `flash-lite` | `gemini-3.8-flash-low` |
 
-Gemini 4 Carbon is Google's strongest model, but through `agy` 1.5.5 to 1.5.7 `carbon-high` still timed out on some requests and took minutes on others (an adversarial review: over 10 minutes), so it is not a default: pass `--model carbon` with a longer `--timeout-min` to use it. The orchestrators, for Google AI Ultra accounts, hand parts of a run to other models; `agy` names them Orchestrator (Carbon) and, since 1.5.8, Orchestrator (Argon). In the same adversarial reviews on `agy` 1.5.8, the Carbon-led one found about as much as `hydrogen-xhigh` but took 7 to 10 minutes, and the Argon-led one found less than `hydrogen-high` in twice the time, so neither is a default. Any other model id from `agy models` works too; `/gemini:setup` lists the models your account offers.
+Gemini 4 Carbon is Google's strongest model, but through `agy` 1.5.5 to 1.5.7 `carbon-high` still timed out on some requests and took minutes on others (an adversarial review: over 10 minutes), so it is not a default: pass `--model carbon` with a longer `--timeout-min` to use it. The orchestrators, for Google AI Ultra accounts, hand parts of a run to other models; `agy` names them Orchestrator (Carbon) and, since 1.5.8, Orchestrator (Argon). In the same adversarial reviews on `agy` 1.5.8, the Carbon-led one found about as much as `hydrogen-xhigh` but took 7 to 10 minutes, and the Argon-led one found less than `hydrogen-high` in twice the time, so neither is a default. The Neon-led one (`agy` 1.5.11) found 10 and 11, no more than `neon-xhigh`, in about 11 minutes. Any other model id from `agy models` works too; `/gemini:setup` lists the models your account offers.
 
-The defaults and aliases name fixed models, so a new Gemini release is not used until a plugin update moves them: a new model can follow the review format differently. `/gemini:setup` names any newer flash, hydrogen, argon or carbon model your account offers than the ones in use, and you can use one right away by its id. With the Gemini CLI, `pro` and `flash` are the CLI's own aliases and follow its updates; the `hydrogen`, `argon`, `carbon` and orchestrator aliases are for the Antigravity CLI only.
+The defaults and aliases name fixed models, so a new Gemini release is not used until a plugin update moves them: a new model can follow the review format differently. `/gemini:setup` names any newer flash, hydrogen, neon, argon or carbon model your account offers than the ones in use, and you can use one right away by its id. With the Gemini CLI, `pro` and `flash` are the CLI's own aliases and follow its updates; the `hydrogen`, `neon`, `argon`, `carbon` and orchestrator aliases are for the Antigravity CLI only.
 
 ## Gemini CLI backend (opt-in)
 
@@ -131,7 +133,7 @@ How it differs:
 | Environment variable | Effect |
 | --- | --- |
 | `GEMINI_COMPANION_BACKEND` | `agy` (default) or `gemini-cli`. |
-| `GEMINI_COMPANION_MODEL` | Default model for every command, as an alias or a model id. Unset, every command uses `gemini-4-hydrogen-high` and adversarial reviews `pro` (`gemini-4-hydrogen-xhigh`); with the Gemini CLI, adversarial reviews use `pro` and other commands the CLI's own default (auto routing). |
+| `GEMINI_COMPANION_MODEL` | Default model for every command, as an alias or a model id. Unset, every command uses `gemini-4-neon-high` and adversarial reviews `pro` (`gemini-4-neon-xhigh`); with the Gemini CLI, adversarial reviews use `pro` and other commands the CLI's own default (auto routing). |
 | `GEMINI_COMPANION_ADVERSARIAL_MODEL` | Model for adversarial reviews, ahead of `GEMINI_COMPANION_MODEL`. Unset, they use `GEMINI_COMPANION_MODEL`, or `pro` when that is unset too. |
 | `GEMINI_COMPANION_MAX_DIFF_KB` | Diff budget for reviews, in KB (default 600). |
 | `GEMINI_COMPANION_AGY` | Path to a specific `agy` executable. |
