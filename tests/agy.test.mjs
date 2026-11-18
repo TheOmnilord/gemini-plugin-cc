@@ -48,17 +48,22 @@ function conversationOf(repo, env, kind) {
 }
 
 test("maps model aliases to agy models", () => {
-  assert.equal(resolveAgyModel(""), "gemini-4-hydrogen-high");
-  assert.equal(resolveAgyModel("auto"), "gemini-4-hydrogen-high");
+  assert.equal(resolveAgyModel(""), "gemini-4-neon-high");
+  assert.equal(resolveAgyModel("auto"), "gemini-4-neon-high");
   assert.equal(resolveAgyModel("hydrogen"), "gemini-4-hydrogen-high");
   assert.equal(resolveAgyModel("hydrogen-xhigh"), "gemini-4-hydrogen-xhigh");
   assert.equal(resolveAgyModel("hydrogen-low"), "gemini-4-hydrogen-low");
-  assert.equal(resolveAgyModel("pro-low"), "gemini-4-hydrogen-low");
+  assert.equal(resolveAgyModel("pro-low"), "gemini-4-neon-low");
   assert.equal(resolveAgyModel("orchestrator"), "gemini-pro-orchestrator");
   assert.equal(resolveAgyModel("orchestrator-argon"), "gemini-pro-orchestrator-argon");
+  assert.equal(resolveAgyModel("orchestrator-neon"), "gemini-pro-orchestrator-neon");
+  assert.equal(resolveAgyModel("neon"), "gemini-4-neon-high");
+  assert.equal(resolveAgyModel("neon-xhigh"), "gemini-4-neon-xhigh");
+  assert.equal(resolveAgyModel("neon-medium"), "gemini-4-neon-medium");
+  assert.equal(resolveAgyModel("neon-low"), "gemini-4-neon-low");
   assert.equal(resolveAgyModel("argon"), "gemini-4-argon-high");
   assert.equal(resolveAgyModel("flash"), "gemini-3.8-flash-medium");
-  assert.equal(resolveAgyModel("pro"), "gemini-4-hydrogen-xhigh");
+  assert.equal(resolveAgyModel("pro"), "gemini-4-neon-xhigh");
   assert.equal(resolveAgyModel("argon-medium"), "gemini-4-argon-medium");
   assert.equal(resolveAgyModel("carbon"), "gemini-4-carbon-high");
   assert.equal(resolveAgyModel("carbon-medium"), "gemini-4-carbon-medium");
@@ -88,14 +93,14 @@ test("review runs through agy read-only, without web, with the review schema", (
   assert.match(result.stdout, /The @param doc/);
   assert.match(result.stdout, /\*\*Unverified assumptions:\*\*\n- Callers may pass an empty list\./);
   assert.equal(result.stdout.match(/Unverified assumptions/g).length, 1);
-  assert.match(result.stdout, /gemini-4-hydrogen-high · .* · 2,100 in \/ 42 out tokens/);
+  assert.match(result.stdout, /gemini-4-neon-high · .* · 2,100 in \/ 42 out tokens/);
 
   const [call] = captures(capture);
   assert.equal(argAfter(call.args, "-p"), "");
   assert.equal(argAfter(call.args, "--input-format"), "stream-json");
   assert.equal(argAfter(call.args, "--output-format"), "stream-json");
   assert.equal(argAfter(call.args, "--agent"), "gemini-cc");
-  assert.equal(argAfter(call.args, "--model"), "gemini-4-hydrogen-high");
+  assert.equal(argAfter(call.args, "--model"), "gemini-4-neon-high");
   assert.ok(argAfter(call.args, "--json-schema").endsWith(path.join("schemas", "review-output.schema.json")));
   assert.ok(call.args.includes("--disable-slash-commands"));
   assert.equal(call.env.mode, "read-only");
@@ -118,14 +123,14 @@ test("adversarial reviews default to Pro unless a model is named", () => {
   const repo = makeRepo();
   fs.appendFileSync(path.join(repo, "app.js"), "// changed\n");
   const runs = [
-    [["adversarial-review"], {}, "gemini-4-hydrogen-xhigh"],
+    [["adversarial-review"], {}, "gemini-4-neon-xhigh"],
     [["adversarial-review", "--model", "flash-low"], {}, "gemini-3.8-flash-low"],
     [["adversarial-review"], { GEMINI_COMPANION_MODEL: "flash" }, "gemini-3.8-flash-medium"],
-    [["review"], {}, "gemini-4-hydrogen-high"],
+    [["review"], {}, "gemini-4-neon-high"],
     // GEMINI_COMPANION_ADVERSARIAL_MODEL covers adversarial reviews only, ahead of GEMINI_COMPANION_MODEL.
     [["adversarial-review"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high", GEMINI_COMPANION_MODEL: "flash" }, "gemini-3.8-flash-high"],
-    [["adversarial-review", "--model", "pro-low"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-4-hydrogen-low"],
-    [["review"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-4-hydrogen-high"]
+    [["adversarial-review", "--model", "pro-low"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-4-neon-low"],
+    [["review"], { GEMINI_COMPANION_ADVERSARIAL_MODEL: "flash-high" }, "gemini-4-neon-high"]
   ];
   for (const [args, extra, model] of runs) {
     const { env, capture } = makeEnv(extra);
@@ -248,7 +253,7 @@ test("task --write lets agy edit, lists the files and cleans up file links", () 
 
   const [call] = captures(capture);
   assert.equal(call.env.mode, "write");
-  assert.equal(argAfter(call.args, "--model"), "gemini-4-hydrogen-xhigh");
+  assert.equal(argAfter(call.args, "--model"), "gemini-4-neon-xhigh");
   assert.equal(argAfter(call.args, "--json-schema"), null);
   // agy 1.3 checks edits itself; accept-edits lets those inside the workspace through.
   assert.equal(argAfter(call.args, "--mode"), "accept-edits");
@@ -330,7 +335,7 @@ test("setup reports agy, the sign-in and the models, and runs a live check", () 
   assert.equal(report.backend, "agy");
   assert.equal(report.agy.version, "1.2.11");
   assert.equal(report.signIn.signedIn, true);
-  assert.equal(report.model.resolved, "gemini-4-hydrogen-high");
+  assert.equal(report.model.resolved, "gemini-4-neon-high");
   assert.equal(report.model.available, true);
   assert.equal(report.live.ok, true);
   assert.equal(report.ready, true);
@@ -345,16 +350,16 @@ test("setup reports agy, the sign-in and the models, and runs a live check", () 
 test("setup shows the adversarial-review model and newer models on the account", () => {
   const setup = (extra) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv(extra).env }).stdout;
   const today = setup({});
-  assert.match(today, /\*\*Adversarial reviews:\*\* `gemini-4-hydrogen-xhigh` \(default: pro\)/);
+  assert.match(today, /\*\*Adversarial reviews:\*\* `gemini-4-neon-xhigh` \(default: pro\)/);
   assert.doesNotMatch(today, /Newer models|To try a newer model/);
 
-  const newer = { FAKE_AGY_EXTRA_MODELS: "gemini-4.1-hydrogen-low,gemini-4.1-hydrogen-high,gemini-4.1-hydrogen-xhigh,gemini-3.10-flash-medium" };
+  const newer = { FAKE_AGY_EXTRA_MODELS: "gemini-4.1-neon-low,gemini-4.1-neon-high,gemini-4.1-neon-xhigh,gemini-3.10-flash-medium" };
   const later = setup(newer);
-  assert.match(later, /\*\*Newer models on this account:\*\* `gemini-4\.1-hydrogen-high` \(newer than `gemini-4-hydrogen-high`\), `gemini-4\.1-hydrogen-xhigh` \(newer than `gemini-4-hydrogen-xhigh`\)\n/);
+  assert.match(later, /\*\*Newer models on this account:\*\* `gemini-4\.1-neon-high` \(newer than `gemini-4-neon-high`\), `gemini-4\.1-neon-xhigh` \(newer than `gemini-4-neon-xhigh`\)\n/);
   assert.match(later, /To try a newer model, pass `--model <model>`/);
   // Every model in use is checked: here Flash for most commands, Hydrogen xhigh for adversarial reviews.
   const flash = setup({ ...newer, GEMINI_COMPANION_MODEL: "flash", GEMINI_COMPANION_ADVERSARIAL_MODEL: "pro" });
-  assert.match(flash, /\*\*Newer models on this account:\*\* `gemini-3\.10-flash-medium` \(newer than `gemini-3\.8-flash-medium`\), `gemini-4\.1-hydrogen-xhigh` \(newer than `gemini-4-hydrogen-xhigh`\)/);
+  assert.match(flash, /\*\*Newer models on this account:\*\* `gemini-3\.10-flash-medium` \(newer than `gemini-3\.8-flash-medium`\), `gemini-4\.1-neon-xhigh` \(newer than `gemini-4-neon-xhigh`\)/);
 
   const missing = setup({ GEMINI_COMPANION_ADVERSARIAL_MODEL: "gemini-9-pro-high" });
   assert.match(missing, /\*\*Adversarial reviews:\*\* `gemini-9-pro-high` \(from GEMINI_COMPANION_ADVERSARIAL_MODEL\), not offered to this account/);
@@ -379,7 +384,8 @@ test("newer Gemini models are found by line and version", () => {
 
 test("setup notes an agy newer than the last version checked", () => {
   const check = (version) => companion(["setup"], { cwd: os.tmpdir(), env: makeEnv({ FAKE_AGY_VERSION: version }).env }).stdout;
-  assert.match(check("1.5.9"), /\*\*Note:\*\* agy 1\.5\.9 is newer than 1\.5\.8, the last version this plugin was checked against/);
+  assert.match(check("1.5.12"), /\*\*Note:\*\* agy 1\.5\.12 is newer than 1\.5\.11, the last version this plugin was checked against/);
+  assert.doesNotMatch(check("1.5.11"), /newer than/);
   assert.match(check("2.0.0"), /agy 2\.0\.0 is newer than/);
   assert.doesNotMatch(check("1.5.8"), /newer than/);
   assert.doesNotMatch(check("1.5.7"), /newer than/);
