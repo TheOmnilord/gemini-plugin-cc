@@ -30,6 +30,7 @@ import { GeminiUnavailableError } from "./gemini.mjs";
 import { repositoryFilesBlock } from "./git.mjs";
 import { dataRoot } from "./jobs.mjs";
 import { killProcessTree, runCommand } from "./proc.mjs";
+import { installedPluginVersion, isNewerVersion } from "./release.mjs";
 
 // Gemini 4 Neon (agy 1.5.11, November 2026): in adversarial reviews of this
 // plugin's own 0.3.24 change, neon-high found 8 and 9 of the confirmed
@@ -243,9 +244,49 @@ function writeIfChanged(file, content) {
   }
 }
 
+// The profile is shared by every Claude session, and a session keeps the
+// plugin version it started with. So the copied guard carries the version
+// that wrote it, in its last line, and a session never replaces a guard from a
+// newer version: an old session would put back a guard that refuses the tools
+// a newer agy gives agents. The stamp sits in the guard itself, not in a file
+// beside it, because releases before it rewrite the guard and nothing else.
+const GUARD_STAMP = /^\/\/ gemini-cc guard from plugin version (\S+)\s*$/m;
+
+function guardStampOf(content) {
+  const lastLine = content.trimEnd().split(/\r?\n/).at(-1) ?? "";
+  return GUARD_STAMP.exec(lastLine)?.[1] ?? null;
+}
+
+// null when the guard is now this version's, or the newer version that wrote
+// the guard already in the profile, which stays.
+function installGuard(file) {
+  const version = installedPluginVersion();
+  let existing = null;
+  try {
+    existing = fs.readFileSync(file, "utf8");
+  } catch {
+    // Missing: install it.
+  }
+  const existingVersion = existing == null ? null : guardStampOf(existing);
+  if (version && existingVersion && isNewerVersion(existingVersion, version)) {
+    return existingVersion;
+  }
+  const source = fs.readFileSync(GUARD_SOURCE, "utf8");
+  writeIfChanged(file, version ? `${source.trimEnd()}\n// gemini-cc guard from plugin version ${version}\n` : source);
+  return null;
+}
+
+export function staleSessionNotice(newerGuard) {
+  return (
+    `This Claude session runs Gemini plugin ${installedPluginVersion()}, but another session has installed the guard from ${newerGuard}. ` +
+    "The run used the newer guard. Restart this session to use the newer plugin."
+  );
+}
+
 // Brings the private profile up to date. It is cheap when nothing changed, so
-// it runs before every agy call and also picks up plugin updates.
-export function ensureAgyProfile(profile = agyProfileDir()) {
+// it runs before every agy call and also picks up plugin updates. newerGuard
+// names the newer plugin version whose guard was kept, or is null.
+export function prepareAgyProfile(profile = agyProfileDir()) {
   const cliDir = path.join(profile, ".gemini", "antigravity-cli");
   const configDir = path.join(profile, ".gemini", "config");
   const settingsFile = path.join(cliDir, "settings.json");
@@ -261,9 +302,13 @@ export function ensureAgyProfile(profile = agyProfileDir()) {
   // Keys agy stores itself are kept; the permissions belong to the plugin.
   writeIfChanged(settingsFile, `${JSON.stringify({ ...settings, permissions: profilePermissions(cliDir) }, null, 2)}\n`);
   writeIfChanged(path.join(configDir, "hooks.json"), `${JSON.stringify(HOOKS, null, 2)}\n`);
-  writeIfChanged(path.join(configDir, GUARD_FILE), fs.readFileSync(GUARD_SOURCE, "utf8"));
+  const newerGuard = installGuard(path.join(configDir, GUARD_FILE));
   writeIfChanged(path.join(configDir, "agents", `${AGENT}.md`), AGENT_DEFINITION);
-  return profile;
+  return { profile, newerGuard };
+}
+
+export function ensureAgyProfile(profile = agyProfileDir()) {
+  return prepareAgyProfile(profile).profile;
 }
 
 function withEnv(base, updates) {
@@ -425,7 +470,7 @@ export function runAgy(options) {
     return Promise.reject(new Error(`Invalid model name "${model}".`));
   }
 
-  const profile = ensureAgyProfile();
+  const { profile, newerGuard } = prepareAgyProfile();
   const cliArgs = [
     "-p",
     "",
@@ -607,11 +652,14 @@ export function runAgy(options) {
         recoveredError: recovered,
         warnings: [],
         // Shown with the answer.
-        notices: recovered
-          ? [
-              `The run ended with a temporary error from Google's API (${recovered}) after Gemini's answer above. agy reports an error it retried and recovered from the same way as one that stopped the run, so this answer may be incomplete. If it looks cut off, run it again.`
-            ]
-          : [],
+        notices: [
+          ...(recovered
+            ? [
+                `The run ended with a temporary error from Google's API (${recovered}) after Gemini's answer above. agy reports an error it retried and recovered from the same way as one that stopped the run, so this answer may be incomplete. If it looks cut off, run it again.`
+              ]
+            : []),
+          ...(newerGuard ? [staleSessionNotice(newerGuard)] : [])
+        ],
         errors: state.errors,
         result: state.result,
         stderr: stderr.trim(),

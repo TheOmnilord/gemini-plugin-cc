@@ -319,10 +319,51 @@ test("the private agy profile carries the agent, the guard and the deny rules", 
   const hooks = JSON.parse(fs.readFileSync(path.join(configDir, "hooks.json"), "utf8"));
   assert.equal(hooks["gemini-cc-guard"].PreToolUse[0].matcher, "*");
   assert.equal(hooks["gemini-cc-guard"].PreToolUse[0].hooks[0].command, "node gemini-cc-guard.mjs");
-  assert.equal(fs.readFileSync(path.join(configDir, "gemini-cc-guard.mjs"), "utf8"), fs.readFileSync(GUARD, "utf8"));
+  assert.equal(fs.readFileSync(path.join(configDir, "gemini-cc-guard.mjs"), "utf8"), stampedGuard(installedPluginVersion()));
   const agent = fs.readFileSync(path.join(configDir, "agents", "gemini-cc.md"), "utf8");
   assert.match(agent, /^name: gemini-cc$/m);
   assert.match(agent, /^tools: \[view_file, list_dir, grep_search, find_by_name, write_to_file, replace_file_content, multi_replace_file_content, search_web, read_url_content, finish\]$/m);
+});
+
+function stampedGuard(version) {
+  return `${fs.readFileSync(GUARD, "utf8").trimEnd()}\n// gemini-cc guard from plugin version ${version}\n`;
+}
+
+function bumped(version, step) {
+  const [major, minor, patch] = version.split(".").map(Number);
+  return `${major}.${minor}.${patch + step}`;
+}
+
+test("a session never replaces the guard of a newer plugin version, and says to restart", () => {
+  const version = installedPluginVersion();
+  const newer = bumped(version, 1);
+  const repo = makeRepo();
+  const { env, profile } = makeEnv();
+  const guardFile = path.join(profile, ".gemini", "config", "gemini-cc-guard.mjs");
+  const run = (input) => {
+    const result = companion(["ask"], { cwd: repo, env, input });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout;
+  };
+  fs.mkdirSync(path.dirname(guardFile), { recursive: true });
+
+  // A newer session's guard stays, and the run says this session is out of date.
+  const newerGuard = `// the newer guard\n// gemini-cc guard from plugin version ${newer}\n`;
+  fs.writeFileSync(guardFile, newerGuard);
+  assert.match(run("hello"), new RegExp(`runs Gemini plugin ${version.replaceAll(".", "\\.")}.*guard from ${newer.replaceAll(".", "\\.")}.*Restart this session`, "s"));
+  assert.equal(fs.readFileSync(guardFile, "utf8"), newerGuard);
+
+  // An unstamped guard, as releases before the stamp write it, is replaced.
+  fs.writeFileSync(guardFile, "// an old guard\n");
+  assert.doesNotMatch(run("hello"), /Restart this session/);
+  assert.equal(fs.readFileSync(guardFile, "utf8"), stampedGuard(version));
+
+  // So are an older version's guard and one of the same version with other content (--plugin-dir work).
+  for (const stamp of [bumped(version, -1), version]) {
+    fs.writeFileSync(guardFile, `// other content\n// gemini-cc guard from plugin version ${stamp}\n`);
+    run("hello");
+    assert.equal(fs.readFileSync(guardFile, "utf8"), stampedGuard(version));
+  }
 });
 
 test("setup reports agy, the sign-in and the models, and runs a live check", () => {
